@@ -2,6 +2,7 @@
 .build/
 .swiftpm/xcode/
 dist/
+assets/generated/*.iconset/
 venv/
 __pycache__/
 *.pyc
