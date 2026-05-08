@@ -27,8 +27,9 @@ let package = Package(
                 "mlx_server.py",
                 "requirements.txt",
                 "Info.plist",
-                "__pycache__",
-                "venv"
+                "venv",
+                "scripts",
+                "dist"
             ]
         )
     ]

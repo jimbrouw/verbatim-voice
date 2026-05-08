@@ -1,27 +1,69 @@
-# Verbatim-Voice
+# Verbatim Voice
 
-**Minimalist, Private, Fast Mac Dictation.**
+Minimal, private Mac dictation for Apple Silicon.
 
-Verbatim is a native macOS application built with Swift and SwiftUI. It aims to provide a frictionless "push-to-talk" dictation experience using local Whisper models for maximum privacy and performance.
+## What It Does
 
-## Core Mission
-- **Privacy First:** All transcription happens locally on your Mac.
-- **Minimalist UI:** Stays out of your way.
-- **Fast:** Instant hotkey activation.
+- Hold Option to record, release to transcribe and paste.
+- Double-tap Option for hands-free recording.
+- Tap Option once while hands-free to stop, transcribe, and paste.
+- Runs transcription locally with Parakeet MLX.
 
-## Tech Stack
-- **Language:** Swift 5.10+
-- **Framework:** SwiftUI
-- **Transcription:** `whisper.cpp` (planned integration)
-- **Target:** macOS 14.0+
+## Current Engine
 
-## Current Status
-- [x] Project Foundation
-- [x] Initial SwiftUI Boilerplate
-- [ ] Global Hotkey Integration (Left/Right Option)
-- [ ] Audio Capture (AVFoundation)
-- [ ] Local Whisper Integration
-- [ ] System-wide Text Injection
+Default model:
 
----
-See `Plan for Verbatim.md` for the full roadmap.
+```text
+mlx-community/parakeet-tdt_ctc-110m
+```
+
+The model is stored outside the app:
+
+```text
+~/Library/Application Support/Verbatim/Models
+```
+
+## Developer Setup
+
+```bash
+scripts/setup_dev.sh
+```
+
+This creates `venv`, installs Python dependencies, checks `ffmpeg`, downloads the default model, and runs `swift build`.
+
+## Build A Local Mac App
+
+```bash
+scripts/build_app.sh
+```
+
+The app is created at:
+
+```text
+dist/Verbatim.app
+```
+
+This build is suitable for local testing and early trusted testers. Wider sharing should use a signed and notarized build with a standalone helper executable.
+
+## Permissions
+
+Verbatim needs:
+
+- Microphone access for recording.
+- Accessibility access for pasting text into the active app.
+
+Enable Accessibility in:
+
+```text
+System Settings > Privacy & Security > Accessibility
+```
+
+## Notes
+
+The Git repository does not include:
+
+- `.build`
+- `venv`
+- downloaded models
+
+Those are generated locally.

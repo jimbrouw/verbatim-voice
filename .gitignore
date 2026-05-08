@@ -1,6 +1,7 @@
 .DS_Store
 .build/
 .swiftpm/xcode/
+dist/
 venv/
 __pycache__/
 *.pyc
