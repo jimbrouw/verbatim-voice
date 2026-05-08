@@ -1,0 +1,5 @@
+fastapi==0.136.1
+hf_transfer==0.1.9
+parakeet-mlx==0.5.1
+python-multipart==0.0.20
+uvicorn==0.46.0

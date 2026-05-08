@@ -1,0 +1,11 @@
+.DS_Store
+.build/
+.swiftpm/xcode/
+venv/
+__pycache__/
+*.pyc
+*.log
+
+# Local model cache lives outside this repo by default, but keep this ignored
+# in case the cache path is changed during local experiments.
+Models/
