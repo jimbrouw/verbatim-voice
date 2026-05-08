@@ -29,7 +29,8 @@ let package = Package(
                 "Info.plist",
                 "venv",
                 "scripts",
-                "dist"
+                "dist",
+                "assets"
             ]
         )
     ]

@@ -25,6 +25,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 <dict>
   <key>CFBundleExecutable</key>
   <string>Verbatim</string>
+  <key>CFBundleIconFile</key>
+  <string>Verbatim</string>
   <key>CFBundleIdentifier</key>
   <string>app.verbatim.voice</string>
   <key>CFBundleName</key>
@@ -49,6 +51,7 @@ PLIST
 
 cp "$ROOT_DIR/mlx_server.py" "$RESOURCES_DIR/mlx_server.py"
 cp "$ROOT_DIR/requirements.txt" "$RESOURCES_DIR/requirements.txt"
+cp "$ROOT_DIR/assets/generated/Verbatim.icns" "$RESOURCES_DIR/Verbatim.icns"
 
 if [[ -x "$ROOT_DIR/.build/helper-dist/VerbatimMLXHelper" ]]; then
   cp "$ROOT_DIR/.build/helper-dist/VerbatimMLXHelper" "$RESOURCES_DIR/VerbatimMLXHelper"
