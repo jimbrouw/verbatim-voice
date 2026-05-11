@@ -4,6 +4,7 @@ import AppKit
 // AppDelegate holds the strong reference to the floating pill window
 class AppDelegate: NSObject, NSApplicationDelegate {
     var pillWindow: FloatingPillWindow?
+    var statusItem: NSStatusItem?
     
     // Core state managers
     let recordingManager = RecordingManager()
@@ -21,6 +22,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         
         showPill()
+        setupStatusMenu()
         checkAccessibility()
         
         // Start the MLX Python server
@@ -49,6 +51,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         pillWindow?.orderFrontRegardless()
         print("🔵 Floating pill window created and shown")
     }
+
+    private func setupStatusMenu() {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        item.button?.title = "V"
+
+        let menu = NSMenu()
+        menu.addItem(NSMenuItem(title: "Settings", action: #selector(openSettings), keyEquivalent: ","))
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "Quit Verbatim", action: #selector(quit), keyEquivalent: "q"))
+
+        item.menu = menu
+        statusItem = item
+    }
+
+    @objc private func openSettings() {
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+    }
+
+    @objc private func quit() {
+        NSApp.terminate(nil)
+    }
 }
 
 @main
@@ -70,11 +94,33 @@ struct VerbatimApp: App {
 }
 
 struct SettingsView: View {
+    @AppStorage(ActivationKey.defaultsKey) private var activationKeyRawValue = ActivationKey.function.rawValue
+
     var body: some View {
-        Form {
-            Text("Settings will go here")
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Verbatim Voice")
+                .font(.headline)
+
+            Picker("Activation key", selection: $activationKeyRawValue) {
+                ForEach(ActivationKey.allCases) { key in
+                    Text(key.displayName).tag(key.rawValue)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            Text(selectedActivationKey.instructionText)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+
+            Text("Changes apply immediately.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
-        .padding()
-        .frame(width: 300, height: 200)
+        .padding(20)
+        .frame(width: 360)
+    }
+
+    private var selectedActivationKey: ActivationKey {
+        ActivationKey(rawValue: activationKeyRawValue) ?? .function
     }
 }

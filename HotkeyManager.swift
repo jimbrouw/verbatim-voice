@@ -4,8 +4,8 @@ import ApplicationServices
 class HotkeyManager: ObservableObject {
     private var eventMonitor: Any?
     private var recordingManager: RecordingManager
-    private var isOptionDown = false
-    private var optionPressStartedAt: Date?
+    private var isActivationKeyDown = false
+    private var activationPressStartedAt: Date?
     private var lastTapReleasedAt: Date?
     private var shouldIgnoreCurrentRelease = false
     
@@ -28,18 +28,16 @@ class HotkeyManager: ObservableObject {
     }
     
     private func setupGlobalMonitor() {
-        // We monitor .flagsChanged to detect when modifier keys like Option are pressed or released.
+        // We monitor .flagsChanged to detect when modifier keys like Fn, Option, or Control are pressed or released.
         eventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged]) { [weak self] event in
             guard let self = self else { return }
             
-            // Check for Option key bit in modifier flags
-            // Using raw value for more granular control if needed, 
-            // but .option is usually sufficient for both.
-            let isOptionPressed = event.modifierFlags.contains(.option)
+            let activationKey = ActivationKey.current
+            let isActivationKeyPressed = activationKey.isPressed(in: event.modifierFlags)
             
-            if isOptionPressed && !self.isOptionDown {
-                self.isOptionDown = true
-                self.optionPressStartedAt = Date()
+            if isActivationKeyPressed && !self.isActivationKeyDown {
+                self.isActivationKeyDown = true
+                self.activationPressStartedAt = Date()
                 
                 if self.recordingManager.isHandsFreeMode {
                     self.shouldIgnoreCurrentRelease = true
@@ -62,11 +60,11 @@ class HotkeyManager: ObservableObject {
                         self.recordingManager.startRecording()
                     }
                 }
-            } else if !isOptionPressed && self.isOptionDown {
-                self.isOptionDown = false
+            } else if !isActivationKeyPressed && self.isActivationKeyDown {
+                self.isActivationKeyDown = false
                 let now = Date()
-                let pressDuration = self.optionPressStartedAt.map { now.timeIntervalSince($0) } ?? 0
-                self.optionPressStartedAt = nil
+                let pressDuration = self.activationPressStartedAt.map { now.timeIntervalSince($0) } ?? 0
+                self.activationPressStartedAt = nil
                 
                 if self.shouldIgnoreCurrentRelease {
                     self.shouldIgnoreCurrentRelease = false
