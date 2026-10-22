@@ -6,6 +6,7 @@ class RecordingManager: ObservableObject {
     @Published var isProcessing = false
     @Published var isHandsFreeMode = false
     @Published var lastTranscription = ""
+    @Published var streamingText = ""
     
     let audioManager = AudioManager()
     let mlxTranscriber = MLXTranscriber()
@@ -35,6 +36,7 @@ class RecordingManager: ObservableObject {
             do {
                 self.lastRecordingURL = try self.audioManager.startRecording()
                 self.recordingStartTime = Date()
+                self.streamingText = ""
                 self.isRecording = true
                 print("🎙️ Started recording (post-beep)")
             } catch {
@@ -56,6 +58,18 @@ class RecordingManager: ObservableObject {
         guard isHandsFreeMode else { return }
         print("🛑 Hands-free recording stopped")
         stopRecording()
+    }
+    
+    func cancelRecording() {
+        pendingStartWorkItem?.cancel()
+        pendingStartWorkItem = nil
+        if isRecording {
+            audioManager.stopRecording()
+            audioManager.currentAmplitude = 0.0
+            isRecording = false
+        }
+        isHandsFreeMode = false
+        print("🚫 Recording cancelled")
     }
     
     func stopRecording() {

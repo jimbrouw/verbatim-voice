@@ -44,4 +44,15 @@ enum ActivationKey: String, CaseIterable, Identifiable {
             return flags.contains(.control)
         }
     }
+
+    func matches(keyCode: CGKeyCode) -> Bool {
+        switch self {
+        case .function:
+            return keyCode == 63 // 0x3F: Fn / Globe key
+        case .option:
+            return keyCode == 58 || keyCode == 61 // Left / Right Option
+        case .control:
+            return keyCode == 59 || keyCode == 62 // Left / Right Control
+        }
+    }
 }

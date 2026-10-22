@@ -37,8 +37,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let trusted = AXIsProcessTrusted()
         print("🔑 Accessibility Enabled: \(trusted)")
         if !trusted {
-            print("⚠️ Accessibility NOT granted — text injection will fail.")
-            print("   Please add Verbatim in System Settings → Privacy & Security → Accessibility")
+            print("⚠️ Accessibility NOT granted — text injection and selection reading will fail.")
+            print("   Please add Voice& in System Settings → Privacy & Security → Accessibility")
             // Prompt the system dialog
             let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
             AXIsProcessTrustedWithOptions(options)
@@ -54,15 +54,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupStatusMenu() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.title = "V"
+        item.button?.title = "Voice&"
 
         let menu = NSMenu()
+        menu.addItem(NSMenuItem(title: "Dyslexia TL;DR (⌥ Space)", action: #selector(showPlainEnglishSummary), keyEquivalent: " "))
+        menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Settings", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Quit Verbatim", action: #selector(quit), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: "Quit Voice&", action: #selector(quit), keyEquivalent: "q"))
 
         item.menu = menu
         statusItem = item
+    }
+
+    @objc private func showPlainEnglishSummary() {
+        let mouseLocation = NSEvent.mouseLocation
+        SelectedTextReader.shared.getSelectedText { capturedText in
+            DispatchQueue.main.async {
+                if let text = capturedText, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    SummaryCardWindow.shared.show(for: text, at: mouseLocation)
+                } else {
+                    SummaryCardWindow.shared.showNoTextSelected(at: mouseLocation)
+                }
+            }
+        }
     }
 
     @objc private func openSettings() {
@@ -98,10 +113,10 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Verbatim Voice")
+            Text("Voice& Assistant")
                 .font(.headline)
 
-            Picker("Activation key", selection: $activationKeyRawValue) {
+            Picker("Dictation Key", selection: $activationKeyRawValue) {
                 ForEach(ActivationKey.allCases) { key in
                     Text(key.displayName).tag(key.rawValue)
                 }
@@ -112,12 +127,23 @@ struct SettingsView: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
 
+            Divider()
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Dyslexia Accessibility")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                Text("Press ⌥ Space with text highlighted anywhere on macOS to open the Plain English TL;DR translator HUD.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Text("Changes apply immediately.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
         }
         .padding(20)
-        .frame(width: 360)
+        .frame(width: 380)
     }
 
     private var selectedActivationKey: ActivationKey {

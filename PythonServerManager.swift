@@ -2,7 +2,7 @@ import Foundation
 
 class PythonServerManager {
     static let shared = PythonServerManager()
-    static let port = 8765
+    static let port = 8768
     private var process: Process?
     
     func startServer() {
@@ -41,7 +41,11 @@ class PythonServerManager {
         
         pipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
-            if data.count > 0, let str = String(data: data, encoding: .utf8) {
+            if data.isEmpty {
+                handle.readabilityHandler = nil
+                return
+            }
+            if let str = String(data: data, encoding: .utf8) {
                 print("[MLX Server] \(str)", terminator: "")
             }
         }
@@ -73,9 +77,11 @@ class PythonServerManager {
         let semaphore = DispatchSemaphore(value: 0)
         var healthy = false
         
-        URLSession.shared.dataTask(with: request) { _, response, _ in
-            if let httpResponse = response as? HTTPURLResponse {
-                healthy = (200..<300).contains(httpResponse.statusCode)
+        URLSession.shared.dataTask(with: request) { data, response, _ in
+            if let httpResponse = response as? HTTPURLResponse, (200..<300).contains(httpResponse.statusCode),
+               let data = data, let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+               json["engine"] != nil {
+                healthy = true
             }
             semaphore.signal()
         }.resume()
