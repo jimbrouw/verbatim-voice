@@ -45,7 +45,14 @@ class TextInjector {
         return tokens
     }
     
-    // MARK: - Pasteboard Fallback Injection
+    // MARK: - Token-by-Token Pasteboard Injection
+    
+    func injectTokenViaPasteboard(_ token: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(token, forType: .string)
+        simulatePaste()
+    }
     
     func injectViaPasteboard(text: String) {
         guard !text.isEmpty else { return }
@@ -55,49 +62,54 @@ class TextInjector {
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
         
-        usleep(30_000)
+        usleep(20_000)
         simulatePaste()
         
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
             self?.restorePasteboard(savedItems, to: pasteboard)
         }
     }
     
     func simulatePaste() {
-        let source = CGEventSource(stateID: .combinedSessionState)
-        let vKeyCode: CGKeyCode = 0x09 // 'V' key
+        let src = CGEventSource(stateID: .hidSystemState)
+        let cmdKey: CGKeyCode = 0x37 // 55: Command key
+        let vKey: CGKeyCode = 0x09   // 9: 'V' key
         
-        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: true),
-              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: false) else {
+        guard let cmdDown = CGEvent(keyboardEventSource: src, virtualKey: cmdKey, keyDown: true),
+              let vDown = CGEvent(keyboardEventSource: src, virtualKey: vKey, keyDown: true),
+              let vUp = CGEvent(keyboardEventSource: src, virtualKey: vKey, keyDown: false),
+              let cmdUp = CGEvent(keyboardEventSource: src, virtualKey: cmdKey, keyDown: false) else {
             return
         }
         
-        keyDown.flags = .maskCommand
-        keyUp.flags = .maskCommand
+        cmdDown.flags = .maskCommand
+        vDown.flags = .maskCommand
+        vUp.flags = .maskCommand
+        cmdUp.flags = []
         
-        keyDown.post(tap: .cgSessionEventTap)
-        keyDown.post(tap: .cghidEventTap)
-        usleep(15_000)
-        keyUp.post(tap: .cgSessionEventTap)
-        keyUp.post(tap: .cghidEventTap)
+        cmdDown.post(tap: .cghidEventTap)
+        usleep(4_000)
+        vDown.post(tap: .cghidEventTap)
+        usleep(4_000)
+        vUp.post(tap: .cghidEventTap)
+        usleep(4_000)
+        cmdUp.post(tap: .cghidEventTap)
     }
     
     func postReturnKey() {
-        let source = CGEventSource(stateID: .combinedSessionState)
+        let src = CGEventSource(stateID: .hidSystemState)
         let returnKeyCode: CGKeyCode = 0x24 // Return
         
-        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: returnKeyCode, keyDown: true),
-              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: returnKeyCode, keyDown: false) else {
+        guard let keyDown = CGEvent(keyboardEventSource: src, virtualKey: returnKeyCode, keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: src, virtualKey: returnKeyCode, keyDown: false) else {
             return
         }
         
         keyDown.flags = []
         keyUp.flags = []
         
-        keyDown.post(tap: .cgSessionEventTap)
         keyDown.post(tap: .cghidEventTap)
-        usleep(15_000)
-        keyUp.post(tap: .cgSessionEventTap)
+        usleep(8_000)
         keyUp.post(tap: .cghidEventTap)
     }
     

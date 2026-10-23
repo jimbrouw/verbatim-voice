@@ -118,6 +118,9 @@ class HotkeyManager: ObservableObject {
             
             if isTargetKey {
                 handleActivationKey(isPressed: isPressed)
+                // Swallow activation key (especially Fn/Globe key) so macOS does not trigger
+                // input source switching or character palettes that steal focus from the text field
+                return nil
             }
         }
         
