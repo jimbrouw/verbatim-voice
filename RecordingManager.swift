@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AppKit
 
 class RecordingManager: ObservableObject {
     @Published var isRecording = false
@@ -148,6 +149,9 @@ class RecordingManager: ObservableObject {
             return
         }
         
+        let pasteboard = NSPasteboard.general
+        let savedItems = TextInjector.shared.backupPasteboard(pasteboard)
+        
         DispatchQueue.global(qos: .userInteractive).async { [weak self] in
             guard let self = self else { return }
             
@@ -164,22 +168,27 @@ class RecordingManager: ObservableObject {
                 // 2. Type the word into the active text box
                 TextInjector.shared.injectToken(token)
                 
-                // 35ms rhythm between words (matching Claude/Gemini streaming feel)
+                // 75ms natural typewriter cadence between words
                 if index < tokens.count - 1 {
-                    usleep(35_000)
+                    usleep(75_000)
                 }
             }
             
             // Handle spoken voice command "press enter"
             if shouldPressEnter {
-                usleep(50_000)
+                usleep(60_000)
                 DispatchQueue.main.async {
                     TextInjector.shared.postReturnKey()
                 }
             }
             
-            // Keep the final text in the pill briefly for visual satisfaction before fading out
-            usleep(400_000)
+            // Restore user's clipboard after streaming completes
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                TextInjector.shared.restorePasteboard(savedItems, to: pasteboard)
+            }
+            
+            // Keep the final text in the pill comfortably for 1.2s so the user can read it!
+            usleep(1_200_000)
             DispatchQueue.main.async {
                 self.isProcessing = false
                 self.isHandsFreeMode = false

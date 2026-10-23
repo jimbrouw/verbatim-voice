@@ -33,11 +33,7 @@ public class WindowHighlightOverlay: NSPanel {
     
     public func show() {
         guard let windowRect = Self.getFocusedWindowRect() else {
-            // If focused window frame could not be determined, fallback to active screen visible frame
-            if let screen = NSScreen.screens.first(where: { NSPointInRect(NSEvent.mouseLocation, $0.frame) }) ?? NSScreen.main {
-                let insetRect = screen.visibleFrame.insetBy(dx: 4, dy: 4)
-                present(at: insetRect)
-            }
+            // NEVER fallback to full screen! Only highlight the actual application window.
             return
         }
         
@@ -75,50 +71,79 @@ public class WindowHighlightOverlay: NSPanel {
     }
     
     private static func getFocusedWindowRect() -> NSRect? {
-        let systemWide = AXUIElementCreateSystemWide()
-        var appValue: AnyObject?
-        var appElement: AXUIElement?
-        
-        if AXUIElementCopyAttributeValue(systemWide, kAXFocusedApplicationAttribute as CFString, &appValue) == .success,
-           let app = appValue {
-            appElement = (app as! AXUIElement)
-        } else if let frontApp = NSWorkspace.shared.frontmostApplication {
-            appElement = AXUIElementCreateApplication(frontApp.processIdentifier)
+        guard var frontApp = NSWorkspace.shared.frontmostApplication,
+              let primaryScreen = NSScreen.screens.first else {
+            return nil
         }
         
-        guard let app = appElement else { return nil }
-        
-        var windowValue: AnyObject?
-        var status = AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &windowValue)
-        if status != .success || windowValue == nil {
-            status = AXUIElementCopyAttributeValue(app, kAXMainWindowAttribute as CFString, &windowValue)
+        // If Voice& itself happens to be reported as frontmost, find the actual target app
+        if frontApp.bundleIdentifier == Bundle.main.bundleIdentifier {
+            if let target = NSWorkspace.shared.runningApplications.first(where: {
+                $0.isActive && $0.bundleIdentifier != Bundle.main.bundleIdentifier
+            }) {
+                frontApp = target
+            }
         }
         
-        guard status == .success, let windowObj = windowValue else { return nil }
-        let windowElement = windowObj as! AXUIElement
-        
-        var posVal: AnyObject?
-        var sizeVal: AnyObject?
-        var axPoint = CGPoint.zero
-        var axSize = CGSize.zero
-        
-        if AXUIElementCopyAttributeValue(windowElement, kAXPositionAttribute as CFString, &posVal) == .success,
-           let p = posVal, CFGetTypeID(p) == AXValueGetTypeID() {
-            AXValueGetValue(p as! AXValue, .cgPoint, &axPoint)
-        }
-        
-        if AXUIElementCopyAttributeValue(windowElement, kAXSizeAttribute as CFString, &sizeVal) == .success,
-           let s = sizeVal, CFGetTypeID(s) == AXValueGetTypeID() {
-            AXValueGetValue(s as! AXValue, .cgSize, &axSize)
-        }
-        
-        guard axSize.width > 80 && axSize.height > 80 else { return nil }
-        
-        guard let primaryScreen = NSScreen.screens.first else { return nil }
         let screenHeight = primaryScreen.frame.height
-        let cocoaY = screenHeight - axPoint.y - axSize.height
+        let targetPID = frontApp.processIdentifier
         
-        return NSRect(x: axPoint.x, y: cocoaY, width: axSize.width, height: axSize.height)
+        // 1. Try CoreGraphics Window List (most reliable across all macOS apps: Electron, Chrome, Notes, Slack, etc.)
+        if let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] {
+            for win in windowList {
+                let pid = win[kCGWindowOwnerPID as String] as? Int32
+                let layer = win[kCGWindowLayer as String] as? Int ?? -1
+                let alpha = win[kCGWindowAlpha as String] as? Double ?? 1.0
+                let bounds = win[kCGWindowBounds as String] as? [String: CGFloat]
+                
+                // Layer 0 is normal standard application windows
+                if layer == 0 && pid == targetPID && alpha > 0.5, let b = bounds {
+                    let w = b["Width"] ?? 0
+                    let h = b["Height"] ?? 0
+                    let x = b["X"] ?? 0
+                    let y = b["Y"] ?? 0
+                    
+                    // Filter out small tooltips or auxiliary popups
+                    if w > 200 && h > 150 {
+                        let cocoaY = screenHeight - y - h
+                        return NSRect(x: x, y: cocoaY, width: w, height: h)
+                    }
+                }
+            }
+        }
+        
+        // 2. Fallback to Accessibility API if CGWindowList didn't match
+        let appElement = AXUIElementCreateApplication(targetPID)
+        var windowValue: AnyObject?
+        var status = AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &windowValue)
+        if status != .success || windowValue == nil {
+            status = AXUIElementCopyAttributeValue(appElement, kAXMainWindowAttribute as CFString, &windowValue)
+        }
+        
+        if status == .success, let windowObj = windowValue {
+            let windowElement = windowObj as! AXUIElement
+            var posVal: AnyObject?
+            var sizeVal: AnyObject?
+            var axPoint = CGPoint.zero
+            var axSize = CGSize.zero
+            
+            if AXUIElementCopyAttributeValue(windowElement, kAXPositionAttribute as CFString, &posVal) == .success,
+               let p = posVal, CFGetTypeID(p) == AXValueGetTypeID() {
+                AXValueGetValue(p as! AXValue, .cgPoint, &axPoint)
+            }
+            if AXUIElementCopyAttributeValue(windowElement, kAXSizeAttribute as CFString, &sizeVal) == .success,
+               let s = sizeVal, CFGetTypeID(s) == AXValueGetTypeID() {
+                AXValueGetValue(s as! AXValue, .cgSize, &axSize)
+            }
+            
+            if axSize.width > 200 && axSize.height > 150 {
+                let cocoaY = screenHeight - axPoint.y - axSize.height
+                return NSRect(x: axPoint.x, y: cocoaY, width: axSize.width, height: axSize.height)
+            }
+        }
+        
+        // NEVER fallback to full screen! If no window is found, return nil.
+        return nil
     }
 }
 
