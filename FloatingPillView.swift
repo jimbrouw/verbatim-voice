@@ -71,18 +71,18 @@ struct FloatingPillView: View {
                     
                     // 3. Text preview / Live status slot
                     Group {
-                        if recordingManager.isProcessing {
-                            Text("Pasting...")
-                                .font(.system(size: 12.5, weight: .semibold, design: .rounded))
-                                .foregroundColor(.white.opacity(0.95))
-                                .transition(.opacity)
-                        } else if !recordingManager.streamingText.isEmpty {
+                        if !recordingManager.streamingText.isEmpty {
                             Text(recordingManager.streamingText)
-                                .font(.system(size: 12.5, weight: .medium, design: .rounded))
-                                .foregroundColor(.white.opacity(0.95))
+                                .font(.system(size: 13, weight: .medium, design: .rounded))
+                                .foregroundColor(.white.opacity(0.96))
                                 .lineLimit(1)
                                 .truncationMode(.head)
-                                .frame(maxWidth: 240, alignment: .leading)
+                                .frame(maxWidth: 320, alignment: .leading)
+                                .transition(.opacity)
+                        } else if recordingManager.isProcessing {
+                            Text("Processing...")
+                                .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+                                .foregroundColor(.white.opacity(0.85))
                                 .transition(.opacity)
                         } else {
                             Text("Listening...")

@@ -173,4 +173,8 @@ class TextInjector {
     func type(text: String) {
         sendUnicodeString(text)
     }
+    
+    func injectToken(_ token: String) {
+        sendUnicodeString(token)
+    }
 }

@@ -117,16 +117,73 @@ class RecordingManager: ObservableObject {
         mlxTranscriber.transcribe(audioURL: url) { [weak self] text in
             guard let self = self else { return }
             
-            self.isProcessing = false
-            if let text = text, !text.isEmpty {
-                self.lastTranscription = text
-                print("✅ Final Transcription: \(text)")
-                SoundManager.shared.playSuccessSound()
-                
-                // Inject text into active app
-                TextInjector.shared.inject(text: text)
-            } else {
+            guard let rawText = text, !rawText.isEmpty else {
                 print("⚠️ Empty or nil transcription result")
+                DispatchQueue.main.async {
+                    self.isProcessing = false
+                    self.streamingText = ""
+                }
+                return
+            }
+            
+            self.lastTranscription = rawText
+            print("✅ Final Transcription: \(rawText)")
+            SoundManager.shared.playSuccessSound()
+            
+            // Format text with context
+            let context = AccessibilityContext.shared.getContext()
+            let formatted = TextFormatter.shared.format(rawText: rawText, context: context)
+            
+            // Stream words word-by-word into BOTH the UI pill and the active text box
+            self.streamWords(formattedText: formatted.text, shouldPressEnter: formatted.shouldPressEnter)
+        }
+    }
+    
+    private func streamWords(formattedText: String, shouldPressEnter: Bool) {
+        let tokens = TextInjector.shared.tokenizeIntoWords(text: formattedText)
+        guard !tokens.isEmpty else {
+            DispatchQueue.main.async {
+                self.isProcessing = false
+            }
+            return
+        }
+        
+        DispatchQueue.global(qos: .userInteractive).async { [weak self] in
+            guard let self = self else { return }
+            
+            var accumulatedText = ""
+            for (index, token) in tokens.enumerated() {
+                accumulatedText.append(token)
+                let currentSnapshot = accumulatedText
+                
+                // 1. Update the UI floating pill in real time
+                DispatchQueue.main.async {
+                    self.streamingText = currentSnapshot
+                }
+                
+                // 2. Type the word into the active text box
+                TextInjector.shared.injectToken(token)
+                
+                // 35ms rhythm between words (matching Claude/Gemini streaming feel)
+                if index < tokens.count - 1 {
+                    usleep(35_000)
+                }
+            }
+            
+            // Handle spoken voice command "press enter"
+            if shouldPressEnter {
+                usleep(50_000)
+                DispatchQueue.main.async {
+                    TextInjector.shared.postReturnKey()
+                }
+            }
+            
+            // Keep the final text in the pill briefly for visual satisfaction before fading out
+            usleep(400_000)
+            DispatchQueue.main.async {
+                self.isProcessing = false
+                self.isHandsFreeMode = false
+                self.streamingText = ""
             }
         }
     }

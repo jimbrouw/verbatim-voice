@@ -7,12 +7,12 @@ import Combine
 /// and smoothly vanishes when dictation is completed and pasted.
 class FloatingPillWindow: NSPanel {
     private var cancellables = Set<AnyCancellable>()
-    private let targetWidth: CGFloat = 340
+    private let targetWidth: CGFloat = 420
     private let targetHeight: CGFloat = 54
     
     init(recordingManager: RecordingManager) {
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 340, height: 54),
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 54),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
