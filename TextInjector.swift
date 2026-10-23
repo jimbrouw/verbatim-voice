@@ -15,35 +15,28 @@ class TextInjector {
     // Typing delay between words in milliseconds
     var wordDelayMs: UInt32 = 75
     
-    func inject(text: String) {
+    func inject(text: String, shouldPressEnter: Bool = false) {
         guard !text.isEmpty else { return }
         
-        let context = AccessibilityContext.shared.getContext()
-        let formatted = TextFormatter.shared.format(rawText: text, context: context)
+        let pasteboard = NSPasteboard.general
+        let savedItems = backupPasteboard(pasteboard)
         
-        if !formatted.text.isEmpty {
-            switch mode {
-            case .typewriter:
-                streamType(text: formatted.text, wordDelayMs: wordDelayMs) { [weak self] in
-                    if formatted.shouldPressEnter {
-                        usleep(60_000)
-                        DispatchQueue.main.async {
-                            self?.postReturnKey()
-                        }
-                    }
-                }
-                return
-                
-            case .paste:
-                paste(text: formatted.text)
-            }
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        
+        // Small pause to guarantee system pasteboard daemon commits the text
+        usleep(30_000)
+        
+        simulatePaste()
+        
+        if shouldPressEnter {
+            usleep(60_000)
+            postReturnKey()
         }
         
-        if formatted.shouldPressEnter {
-            let delay: TimeInterval = formatted.text.isEmpty ? 0.0 : 0.08
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                self.postReturnKey()
-            }
+        // Preserve user's previous clipboard after the target app has completed pasting
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            self?.restorePasteboard(savedItems, to: pasteboard)
         }
     }
     
@@ -132,7 +125,6 @@ class TextInjector {
         keyUp.flags = .maskCommand
         
         keyDown.post(tap: .cghidEventTap)
-        usleep(15_000)
         keyUp.post(tap: .cghidEventTap)
     }
     

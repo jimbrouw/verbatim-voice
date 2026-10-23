@@ -135,12 +135,15 @@ class RecordingManager: ObservableObject {
             let context = AccessibilityContext.shared.getContext()
             let formatted = TextFormatter.shared.format(rawText: rawText, context: context)
             
-            // Stream words word-by-word into BOTH the UI pill and the active text box
-            self.streamWords(formattedText: formatted.text, shouldPressEnter: formatted.shouldPressEnter)
+            // 1. Immediately inject the full formatted text cleanly into the active text box!
+            TextInjector.shared.inject(text: formatted.text, shouldPressEnter: formatted.shouldPressEnter)
+            
+            // 2. Stream the words word-by-word into the Wispr Flow floating pill HUD
+            self.streamWordsToUI(formattedText: formatted.text)
         }
     }
     
-    private func streamWords(formattedText: String, shouldPressEnter: Bool) {
+    private func streamWordsToUI(formattedText: String) {
         let tokens = TextInjector.shared.tokenizeIntoWords(text: formattedText)
         guard !tokens.isEmpty else {
             DispatchQueue.main.async {
@@ -148,9 +151,6 @@ class RecordingManager: ObservableObject {
             }
             return
         }
-        
-        let pasteboard = NSPasteboard.general
-        let savedItems = TextInjector.shared.backupPasteboard(pasteboard)
         
         DispatchQueue.global(qos: .userInteractive).async { [weak self] in
             guard let self = self else { return }
@@ -160,35 +160,19 @@ class RecordingManager: ObservableObject {
                 accumulatedText.append(token)
                 let currentSnapshot = accumulatedText
                 
-                // 1. Update the UI floating pill in real time
+                // Stream word-by-word into the floating pill HUD
                 DispatchQueue.main.async {
                     self.streamingText = currentSnapshot
                 }
                 
-                // 2. Type the word into the active text box
-                TextInjector.shared.injectToken(token)
-                
-                // 75ms natural typewriter cadence between words
+                // 55ms cadence per word for a fluid live streaming effect
                 if index < tokens.count - 1 {
-                    usleep(75_000)
+                    usleep(55_000)
                 }
             }
             
-            // Handle spoken voice command "press enter"
-            if shouldPressEnter {
-                usleep(60_000)
-                DispatchQueue.main.async {
-                    TextInjector.shared.postReturnKey()
-                }
-            }
-            
-            // Restore user's clipboard after streaming completes
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                TextInjector.shared.restorePasteboard(savedItems, to: pasteboard)
-            }
-            
-            // Keep the final text in the pill comfortably for 1.2s so the user can read it!
-            usleep(1_200_000)
+            // Keep the final text visible in the pill comfortably for 1.5s so the user can read it!
+            usleep(1_500_000)
             DispatchQueue.main.async {
                 self.isProcessing = false
                 self.isHandsFreeMode = false
