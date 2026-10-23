@@ -14,6 +14,7 @@ class RecordingManager: ObservableObject {
     private var lastRecordingURL: URL?
     private var recordingStartTime: Date?
     private var pendingStartWorkItem: DispatchWorkItem?
+    private var capturedFocusedElement: AXUIElement?
     
     private let minimumRecordingDuration: TimeInterval = 0.5 // seconds
     
@@ -26,6 +27,9 @@ class RecordingManager: ObservableObject {
         
         // 1. Play sound first
         SoundManager.shared.playStartSound()
+        
+        // Capture focused element where the cursor currently is
+        self.capturedFocusedElement = AccessibilityContext.shared.getFocusedElement()
         
         // 2. Wait 300ms for beep to finish before starting mic tap
         pendingStartWorkItem?.cancel()
@@ -135,15 +139,12 @@ class RecordingManager: ObservableObject {
             let context = AccessibilityContext.shared.getContext()
             let formatted = TextFormatter.shared.format(rawText: rawText, context: context)
             
-            // 1. Immediately inject the full formatted text cleanly into the active text box!
-            TextInjector.shared.inject(text: formatted.text, shouldPressEnter: formatted.shouldPressEnter)
-            
-            // 2. Stream the words word-by-word into the Wispr Flow floating pill HUD
-            self.streamWordsToUI(formattedText: formatted.text)
+            // Stream word-by-word into BOTH the active text box and the floating pill UI!
+            self.streamWordByWord(formattedText: formatted.text, shouldPressEnter: formatted.shouldPressEnter)
         }
     }
     
-    private func streamWordsToUI(formattedText: String) {
+    private func streamWordByWord(formattedText: String, shouldPressEnter: Bool) {
         let tokens = TextInjector.shared.tokenizeIntoWords(text: formattedText)
         guard !tokens.isEmpty else {
             DispatchQueue.main.async {
@@ -152,27 +153,63 @@ class RecordingManager: ObservableObject {
             return
         }
         
+        // Target focused element (captured when user pressed activation key, or current)
+        let targetElement = self.capturedFocusedElement ?? AccessibilityContext.shared.getFocusedElement()
+        self.capturedFocusedElement = nil
+        
         DispatchQueue.global(qos: .userInteractive).async { [weak self] in
             guard let self = self else { return }
             
             var accumulatedText = ""
-            for (index, token) in tokens.enumerated() {
-                accumulatedText.append(token)
-                let currentSnapshot = accumulatedText
-                
-                // Stream word-by-word into the floating pill HUD
-                DispatchQueue.main.async {
-                    self.streamingText = currentSnapshot
-                }
-                
-                // 55ms cadence per word for a fluid live streaming effect
-                if index < tokens.count - 1 {
-                    usleep(55_000)
+            var directInjectionWorked = false
+            
+            if let element = targetElement, TextInjector.shared.canUseAXInjection(on: element) {
+                directInjectionWorked = true
+                for (index, token) in tokens.enumerated() {
+                    accumulatedText.append(token)
+                    let currentSnapshot = accumulatedText
+                    
+                    // 1. Update UI pill in real time
+                    DispatchQueue.main.async {
+                        self.streamingText = currentSnapshot
+                    }
+                    
+                    // 2. Type word directly into active text box at caret
+                    _ = TextInjector.shared.injectTokenDirectly(token, to: element)
+                    
+                    // 65ms natural typewriter cadence between words
+                    if index < tokens.count - 1 {
+                        usleep(65_000)
+                    }
                 }
             }
             
-            // Keep the final text visible in the pill comfortably for 1.5s so the user can read it!
-            usleep(1_500_000)
+            // Fallback for non-accessible controls (e.g. legacy/custom fields)
+            if !directInjectionWorked {
+                TextInjector.shared.injectViaPasteboard(text: formattedText)
+                
+                for (index, token) in tokens.enumerated() {
+                    accumulatedText.append(token)
+                    let currentSnapshot = accumulatedText
+                    DispatchQueue.main.async {
+                        self.streamingText = currentSnapshot
+                    }
+                    if index < tokens.count - 1 {
+                        usleep(50_000)
+                    }
+                }
+            }
+            
+            // Handle spoken command "press enter"
+            if shouldPressEnter {
+                usleep(80_000)
+                DispatchQueue.main.async {
+                    TextInjector.shared.postReturnKey()
+                }
+            }
+            
+            // Keep final text visible in pill for 1.4s so user can read it
+            usleep(1_400_000)
             DispatchQueue.main.async {
                 self.isProcessing = false
                 self.isHandsFreeMode = false

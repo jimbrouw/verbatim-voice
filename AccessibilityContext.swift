@@ -28,6 +28,33 @@ public class AccessibilityContext {
     
     private init() {}
     
+    /// Returns the currently focused UI element of the active application.
+    public func getFocusedElement() -> AXUIElement? {
+        var frontApp = NSWorkspace.shared.frontmostApplication
+        if frontApp?.bundleIdentifier == Bundle.main.bundleIdentifier {
+            frontApp = NSWorkspace.shared.runningApplications.first(where: {
+                $0.isActive && $0.bundleIdentifier != Bundle.main.bundleIdentifier
+            })
+        }
+        guard let app = frontApp else { return nil }
+        
+        let appElement = AXUIElementCreateApplication(app.processIdentifier)
+        var focusedElementValue: AnyObject?
+        if AXUIElementCopyAttributeValue(appElement, kAXFocusedUIElementAttribute as CFString, &focusedElementValue) == .success,
+           let element = focusedElementValue {
+            return (element as! AXUIElement)
+        }
+        
+        let systemWide = AXUIElementCreateSystemWide()
+        var systemFocusedValue: AnyObject?
+        if AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &systemFocusedValue) == .success,
+           let element = systemFocusedValue {
+            return (element as! AXUIElement)
+        }
+        
+        return nil
+    }
+    
     /// Queries the focused UI element of the active application for surrounding text and context.
     public func getContext() -> AccessibilityContextInfo {
         let systemWide = AXUIElementCreateSystemWide()

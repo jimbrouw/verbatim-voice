@@ -1,74 +1,22 @@
 import Cocoa
 import ApplicationServices
 
-public enum InjectionMode: String {
-    case typewriter
-    case paste
-}
-
 class TextInjector {
     static let shared = TextInjector()
     
-    // Default mode: typewriter streaming (words input one at a time like Claude/Gemini)
-    var mode: InjectionMode = .typewriter
+    // MARK: - Direct Accessibility Word-by-Word Typing
     
-    // Typing delay between words in milliseconds
-    var wordDelayMs: UInt32 = 75
-    
-    func inject(text: String, shouldPressEnter: Bool = false) {
-        guard !text.isEmpty else { return }
-        
-        let pasteboard = NSPasteboard.general
-        let savedItems = backupPasteboard(pasteboard)
-        
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
-        
-        // Small pause to guarantee system pasteboard daemon commits the text
-        usleep(30_000)
-        
-        simulatePaste()
-        
-        if shouldPressEnter {
-            usleep(60_000)
-            postReturnKey()
-        }
-        
-        // Preserve user's previous clipboard after the target app has completed pasting
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            self?.restorePasteboard(savedItems, to: pasteboard)
-        }
+    /// Checks if the focused element allows inserting text at the caret
+    func canUseAXInjection(on element: AXUIElement) -> Bool {
+        var settable: DarwinBoolean = false
+        let status = AXUIElementIsAttributeSettable(element, kAXSelectedTextAttribute as CFString, &settable)
+        return status == .success && settable.boolValue
     }
     
-    // MARK: - Word-by-Word Streaming Injection
-    
-    func injectToken(_ token: String) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(token, forType: .string)
-        simulatePaste()
-    }
-    
-    func streamType(text: String, wordDelayMs: UInt32 = 75, completion: (() -> Void)? = nil) {
-        let pasteboard = NSPasteboard.general
-        let savedItems = backupPasteboard(pasteboard)
-        let words = tokenizeIntoWords(text: text)
-        
-        DispatchQueue.global(qos: .userInteractive).async { [weak self] in
-            guard let self = self else { return }
-            for (index, word) in words.enumerated() {
-                self.injectToken(word)
-                if index < words.count - 1 && wordDelayMs > 0 {
-                    usleep(wordDelayMs * 1000)
-                }
-            }
-            
-            // Restore user's previous clipboard after streaming completes
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                self.restorePasteboard(savedItems, to: pasteboard)
-            }
-            completion?()
-        }
+    /// Injects a single word token directly at the caret without touching the clipboard
+    func injectTokenDirectly(_ token: String, to element: AXUIElement) -> Bool {
+        let status = AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, token as CFTypeRef)
+        return status == .success
     }
     
     // MARK: - Tokenization
@@ -97,17 +45,20 @@ class TextInjector {
         return tokens
     }
     
-    // MARK: - Instant Paste Fallback
+    // MARK: - Pasteboard Fallback Injection
     
-    func paste(text: String) {
+    func injectViaPasteboard(text: String) {
+        guard !text.isEmpty else { return }
         let pasteboard = NSPasteboard.general
         let savedItems = backupPasteboard(pasteboard)
         
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
+        
+        usleep(30_000)
         simulatePaste()
         
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             self?.restorePasteboard(savedItems, to: pasteboard)
         }
     }
@@ -124,7 +75,10 @@ class TextInjector {
         keyDown.flags = .maskCommand
         keyUp.flags = .maskCommand
         
+        keyDown.post(tap: .cgSessionEventTap)
         keyDown.post(tap: .cghidEventTap)
+        usleep(15_000)
+        keyUp.post(tap: .cgSessionEventTap)
         keyUp.post(tap: .cghidEventTap)
     }
     
@@ -140,8 +94,10 @@ class TextInjector {
         keyDown.flags = []
         keyUp.flags = []
         
+        keyDown.post(tap: .cgSessionEventTap)
         keyDown.post(tap: .cghidEventTap)
         usleep(15_000)
+        keyUp.post(tap: .cgSessionEventTap)
         keyUp.post(tap: .cghidEventTap)
     }
     
