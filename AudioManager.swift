@@ -26,10 +26,24 @@ class AudioManager: NSObject, ObservableObject {
     }
     
     func startRecording() throws -> URL {
+        // Clean up previous engine state safely
+        if audioEngine.isRunning {
+            audioEngine.stop()
+        }
+        audioEngine.inputNode.removeTap(onBus: 0)
+        audioEngine.reset()
+        
         let inputNode = audioEngine.inputNode
         let nativeFormat = inputNode.inputFormat(forBus: 0)
         
         print("🎤 Mic native format: \(nativeFormat.sampleRate)Hz, \(nativeFormat.channelCount)ch")
+        guard nativeFormat.sampleRate > 0 && nativeFormat.channelCount > 0 else {
+            throw NSError(
+                domain: "com.verbatim.audio",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Invalid microphone format: sample rate or channels is 0"]
+            )
+        }
         
         // Setup temporary file URL
         let tempDir = FileManager.default.temporaryDirectory
@@ -39,11 +53,10 @@ class AudioManager: NSObject, ObservableObject {
         try? FileManager.default.removeItem(at: fileURL)
         self.recordingURL = fileURL
         
-        // Record in the mic's NATIVE format — no real-time conversion.
-        // Conversion to 16kHz mono happens later in WhisperManager.loadAudioFrames()
+        // Record in the mic's native format
         audioFile = try AVAudioFile(forWriting: fileURL, settings: nativeFormat.settings)
         
-        // Install tap — larger buffer (4096) to reduce HALC overload warnings
+        // Install tap with 4096 buffer size
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: nativeFormat) { [weak self] (buffer, time) in
             guard let self = self, let audioFile = self.audioFile else { return }
             
@@ -60,10 +73,11 @@ class AudioManager: NSObject, ObservableObject {
                 }
             }
             
-            // Write raw native audio to file — no converter, no corruption
+            // Write raw native audio to file
             try? audioFile.write(from: buffer)
         }
         
+        audioEngine.prepare()
         try audioEngine.start()
         return fileURL
     }
@@ -71,6 +85,7 @@ class AudioManager: NSObject, ObservableObject {
     func stopRecording() {
         audioEngine.inputNode.removeTap(onBus: 0)
         audioEngine.stop()
-        audioFile = nil // Close the file
+        audioEngine.reset()
+        audioFile = nil // Close the file cleanly
     }
 }

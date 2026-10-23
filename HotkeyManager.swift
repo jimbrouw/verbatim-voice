@@ -174,7 +174,7 @@ class HotkeyManager: ObservableObject {
         return Unmanaged.passUnretained(event)
     }
     
-    // MARK: - Activation Key State Machine (Monologue Dual-Threshold)
+    // MARK: - Activation Key State Machine (Push-to-Talk & Hands-Free Toggle)
     
     private func handleActivationKey(isPressed: Bool) {
         if isPressed && !isActivationKeyDown {
@@ -183,11 +183,14 @@ class HotkeyManager: ObservableObject {
             let now = Date()
             activationPressStartedAt = now
             
-            // Case A: User was in Hands-Free Locked Mode -> Single tap exits and pastes
-            if recordingManager.isHandsFreeMode {
-                print("🛑 [HotkeyManager] Tapped while in Hands-Free mode -> stopping and pasting")
+            // Case A: User was already recording (in Hands-Free or Toggle Mode) -> Single tap exits and pastes!
+            if recordingManager.isRecording || recordingManager.isHandsFreeMode {
+                print("🛑 [HotkeyManager] Tapped while recording -> stopping and pasting")
+                quickTapGraceWorkItem?.cancel()
+                quickTapGraceWorkItem = nil
+                lastTapReleasedAt = nil
                 DispatchQueue.main.async {
-                    self.recordingManager.stopHandsFreeRecording()
+                    self.recordingManager.stopRecording()
                 }
                 return
             }
@@ -242,25 +245,13 @@ class HotkeyManager: ObservableObject {
                     self.recordingManager.stopRecording()
                 }
             } else {
-                // Monologue Rule: Quick tap (<0.4s). Open 600ms grace window for double-tap lock.
-                // If no 2nd tap arrives before 600ms expires, silently discard with NO sound and NO error.
-                print("⏳ [HotkeyManager] Quick tap (\(String(format: "%.2f", pressDuration))s) -> opening 600ms grace window...")
+                // Quick tap (<0.4s): User tapped quickly to dictate hands-free!
+                // Keep recording active in Hands-Free mode so user can speak freely and tap again when done.
+                print("🎙️ [HotkeyManager] Quick tap (\(String(format: "%.2f", pressDuration))s) -> Entering Hands-Free dictation mode")
                 lastTapReleasedAt = now
-                
-                quickTapGraceWorkItem?.cancel()
-                let workItem = DispatchWorkItem { [weak self] in
-                    guard let self = self else { return }
-                    self.lastTapReleasedAt = nil
-                    self.quickTapGraceWorkItem = nil
-                    
-                    // 600ms expired without second tap -> SILENT DISCARD
-                    print("🔇 [HotkeyManager] 600ms window expired with no second tap -> Silent Discard")
-                    DispatchQueue.main.async {
-                        self.recordingManager.silentDiscard()
-                    }
+                DispatchQueue.main.async {
+                    self.recordingManager.startHandsFreeRecording()
                 }
-                quickTapGraceWorkItem = workItem
-                DispatchQueue.main.asyncAfter(deadline: .now() + doubleTapGraceWindow, execute: workItem)
             }
         }
     }

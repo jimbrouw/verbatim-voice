@@ -1,60 +1,40 @@
-import AVFoundation
 import AppKit
+import AudioToolbox
 
 class SoundManager {
     static let shared = SoundManager()
     
-    private var startPlayer: AVAudioPlayer?
-    private var stopPlayer: AVAudioPlayer?
+    private let tinkSound = NSSound(named: "Tink")
+    private let popSound = NSSound(named: "Pop")
+    private let purrSound = NSSound(named: "Purr")
     
+    /// Use system sound for "start recording" - soft, instantaneous click
     func playStartSound() {
-        // Use system sound for "start recording" - a soft, low pop
-        playTone(frequency: 880, duration: 0.08, volume: 0.4)
-    }
-    
-    func playStopSound() {
-        // Use system sound for "stop recording" - slightly lower tone
-        playTone(frequency: 660, duration: 0.1, volume: 0.3)
-    }
-    
-    func playSuccessSound() {
-        // Soft chime on successful transcription
-        playTone(frequency: 1047, duration: 0.12, volume: 0.25)
-    }
-    
-    private func playTone(frequency: Double, duration: Double, volume: Float) {
-        let sampleRate = 44100.0
-        let frameCount = Int(sampleRate * duration)
-        let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
-        
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frameCount)) else { return }
-        buffer.frameLength = AVAudioFrameCount(frameCount)
-        
-        let channelData = buffer.floatChannelData![0]
-        for i in 0..<frameCount {
-            let t = Double(i) / sampleRate
-            // Sine wave with a quick fade-out envelope for a "click" feel
-            let envelope = max(0, 1.0 - (t / duration))
-            channelData[i] = Float(sin(2.0 * .pi * frequency * t) * envelope * Double(volume))
+        if let sound = tinkSound {
+            sound.stop()
+            sound.play()
+        } else {
+            AudioServicesPlaySystemSound(1057)
         }
-        
-        // Play using AVAudioEngine for zero-latency output
-        let engine = AVAudioEngine()
-        let playerNode = AVAudioPlayerNode()
-        engine.attach(playerNode)
-        engine.connect(playerNode, to: engine.mainMixerNode, format: format)
-        
-        do {
-            try engine.start()
-            playerNode.scheduleBuffer(buffer, completionHandler: nil)
-            playerNode.play()
-            
-            // Keep engine alive for the duration of the tone
-            DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.05) {
-                engine.stop()
-            }
-        } catch {
-            // Silently fail - sounds are non-critical
+    }
+    
+    /// Use system sound for "stop recording" - soft pop
+    func playStopSound() {
+        if let sound = popSound {
+            sound.stop()
+            sound.play()
+        } else {
+            AudioServicesPlaySystemSound(1104)
+        }
+    }
+    
+    /// Soft feedback chime on successful transcription
+    func playSuccessSound() {
+        if let sound = purrSound {
+            sound.stop()
+            sound.play()
+        } else {
+            AudioServicesPlaySystemSound(1054)
         }
     }
 }

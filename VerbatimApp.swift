@@ -129,7 +129,7 @@ struct VerbatimApp: App {
 }
 
 struct SettingsView: View {
-    @AppStorage(ActivationKey.defaultsKey) private var activationKeyRawValue = ActivationKey.function.rawValue
+    @AppStorage(ActivationKey.defaultsKey) private var activationKeyRawValue = ActivationKey.option.rawValue
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -167,6 +167,6 @@ struct SettingsView: View {
     }
 
     private var selectedActivationKey: ActivationKey {
-        ActivationKey(rawValue: activationKeyRawValue) ?? .function
+        ActivationKey(rawValue: activationKeyRawValue) ?? .option
     }
 }

@@ -49,6 +49,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
   <string>Voice&amp; needs access to your microphone to transcribe your voice into text locally on the Apple Neural Engine.</string>
   <key>NSScreenCaptureUsageDescription</key>
   <string>Voice&amp; needs screen recording access to understand visible technical keywords on your screen for enhanced transcription accuracy.</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Voice&amp; uses Apple Events to inject transcribed text into your active cursor position.</string>
 </dict>
 </plist>
 PLIST

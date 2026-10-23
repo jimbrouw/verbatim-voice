@@ -17,22 +17,22 @@ class RecordingManager: ObservableObject {
     private var capturedFocusedElement: AXUIElement?
     private var targetApplication: NSRunningApplication?
     
-    private let minimumRecordingDuration: TimeInterval = 0.4 // seconds
+    private let minimumRecordingDuration: TimeInterval = 0.35 // seconds
     
     func startRecording() {
-        // Don't start a new recording while processing
+        // Don't start a new recording while processing previous dictation
         guard !isProcessing else {
-            print("⚠️ Skipping - still processing previous recording")
+            print("⚠️ [RecordingManager] Skipping start - still processing previous recording")
             return
         }
         
         // 1. Pause media playback (Spotify / Music / VLC)
         MediaManager.shared.pausePlaybackIfNeeded()
         
-        // 2. Play sound
+        // 2. Play soft click start sound
         SoundManager.shared.playStartSound()
         
-        // Capture frontmost application and focused element where cursor currently is
+        // 3. Capture frontmost application and focused element where cursor currently is
         var front = NSWorkspace.shared.frontmostApplication
         if front?.bundleIdentifier == Bundle.main.bundleIdentifier {
             front = NSWorkspace.shared.runningApplications.first(where: {
@@ -42,26 +42,26 @@ class RecordingManager: ObservableObject {
         self.targetApplication = front
         self.capturedFocusedElement = AccessibilityContext.shared.getFocusedElement()
         
-        // Capture active on-screen technical keywords for context bias
+        // 4. Capture active on-screen technical keywords for context bias
         ScreenContext.shared.captureFocusedWindowKeywords(for: front?.processIdentifier)
         
-        // Start audio capture
+        // 5. Start native CoreAudio capture
         pendingStartWorkItem?.cancel()
         do {
             self.lastRecordingURL = try self.audioManager.startRecording()
             self.recordingStartTime = Date()
             self.streamingText = ""
             self.isRecording = true
-            print("🎙️ Started native recording session")
+            print("🎙️ [RecordingManager] Started native recording session for app: \(front?.localizedName ?? "unknown")")
         } catch {
-            print("❌ Failed to start recording: \(error)")
+            print("❌ [RecordingManager] Failed to start recording: \(error)")
         }
     }
     
     func startHandsFreeRecording() {
         guard !isProcessing else { return }
         isHandsFreeMode = true
-        print("🎙️ Hands-free recording mode active")
+        print("🎙️ [RecordingManager] Hands-free recording mode active")
         if !isRecording {
             startRecording()
         }
@@ -69,7 +69,7 @@ class RecordingManager: ObservableObject {
     
     func stopHandsFreeRecording() {
         guard isHandsFreeMode else { return }
-        print("🛑 Hands-free recording stopped")
+        print("🛑 [RecordingManager] Hands-free recording stopped")
         stopRecording()
     }
     
@@ -99,7 +99,7 @@ class RecordingManager: ObservableObject {
         isHandsFreeMode = false
         streamingText = ""
         MediaManager.shared.resumePlaybackIfNeeded()
-        print("🚫 Recording cancelled")
+        print("🚫 [RecordingManager] Recording cancelled")
     }
     
     func stopRecording() {
@@ -124,14 +124,14 @@ class RecordingManager: ObservableObject {
         if let startTime = recordingStartTime {
             let duration = Date().timeIntervalSince(startTime)
             if duration < minimumRecordingDuration {
-                print("⚠️ Recording too short (\(String(format: "%.2f", duration))s) — discarding silently")
+                print("⚠️ [RecordingManager] Recording too short (\(String(format: "%.2f", duration))s) — discarding silently")
                 return
             }
         }
         
         // Guard against instanceBusy
         guard !isProcessing else {
-            print("⚠️ Skipping transcription - already processing a previous recording")
+            print("⚠️ [RecordingManager] Skipping transcription - already processing a previous recording")
             return
         }
         
@@ -140,18 +140,18 @@ class RecordingManager: ObservableObject {
         // Check file exists and has content
         let fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
         guard fileSize > 1000 else {
-            print("⚠️ Recording file too small (\(fileSize) bytes) — skipping")
+            print("⚠️ [RecordingManager] Recording file too small (\(fileSize) bytes) — skipping")
             return
         }
         
-        print("Stopped recording. File size: \(fileSize) bytes. Starting in-process CoreML ASR...")
+        print("🛑 [RecordingManager] Stopped recording. File size: \(fileSize) bytes. Starting in-process CoreML ASR...")
         isProcessing = true
         
         transcriber.transcribe(audioURL: url) { [weak self] text in
             guard let self = self else { return }
             
             guard let rawText = text, !rawText.isEmpty else {
-                print("⚠️ Empty or nil transcription result")
+                print("⚠️ [RecordingManager] Empty or nil transcription result")
                 DispatchQueue.main.async {
                     self.isProcessing = false
                     self.streamingText = ""
@@ -160,25 +160,30 @@ class RecordingManager: ObservableObject {
             }
             
             self.lastTranscription = rawText
-            print("✅ Final Transcription: \(rawText)")
+            print("✅ [RecordingManager] Final Transcription: \"\(rawText)\"")
             SoundManager.shared.playSuccessSound()
             
-            // Format text with context
+            // Format text with context (SmartBacktracker, homophones, screen context, capitalization)
             let context = AccessibilityContext.shared.getContext()
             let formatted = TextFormatter.shared.format(rawText: rawText, context: context)
             
-            // Stream word-by-word into BOTH the active text box and the floating pill UI!
-            self.streamWordByWord(formattedText: formatted.text, shouldPressEnter: formatted.shouldPressEnter)
+            // Inject text into the user's cursor position and update UI
+            self.injectFormattedText(formatted.text, shouldPressEnter: formatted.shouldPressEnter)
         }
     }
     
-    private func streamWordByWord(formattedText: String, shouldPressEnter: Bool) {
-        let tokens = TextInjector.shared.tokenizeIntoWords(text: formattedText)
-        guard !tokens.isEmpty else {
+    private func injectFormattedText(_ formattedText: String, shouldPressEnter: Bool) {
+        guard !formattedText.isEmpty else {
             DispatchQueue.main.async {
                 self.isProcessing = false
+                self.streamingText = ""
             }
             return
+        }
+        
+        // Show dictated result immediately in floating pill HUD
+        DispatchQueue.main.async {
+            self.streamingText = formattedText
         }
         
         let targetApp = self.targetApplication
@@ -186,45 +191,19 @@ class RecordingManager: ObservableObject {
         let targetElement = self.capturedFocusedElement ?? AccessibilityContext.shared.getFocusedElement()
         self.capturedFocusedElement = nil
         
-        let pasteboard = NSPasteboard.general
-        let savedItems = TextInjector.shared.backupPasteboard(pasteboard)
-        
         DispatchQueue.global(qos: .userInteractive).async { [weak self] in
             guard let self = self else { return }
             
-            // Re-activate target app if it lost focus
+            // Ensure target application is active before typing/pasting
             if let app = targetApp, !app.isActive {
                 DispatchQueue.main.async {
                     app.activate()
                 }
-                usleep(40_000)
+                usleep(50_000) // 50ms for window server focus switch
             }
             
-            var accumulatedText = ""
-            let useAX = targetElement != nil && TextInjector.shared.canUseAXInjection(on: targetElement!)
-            
-            for (index, token) in tokens.enumerated() {
-                accumulatedText.append(token)
-                let currentSnapshot = accumulatedText
-                
-                // 1. Update UI pill in real time
-                DispatchQueue.main.async {
-                    self.streamingText = currentSnapshot
-                }
-                
-                // 2. Type word directly into active text box at caret
-                if useAX, let element = targetElement, TextInjector.shared.injectTokenDirectly(token, to: element) {
-                    // Direct AX insertion succeeded
-                } else {
-                    // Rock-solid token-by-token Cmd+V paste with hardware modifier sequence
-                    TextInjector.shared.injectTokenViaPasteboard(token)
-                }
-                
-                // 65ms natural typewriter cadence between words
-                if index < tokens.count - 1 {
-                    usleep(65_000)
-                }
-            }
+            // Inject complete text at cursor position (AX direct or transient zero-pollution pasteboard)
+            TextInjector.shared.inject(text: formattedText, targetElement: targetElement)
             
             // Handle spoken command "press enter"
             if shouldPressEnter {
@@ -234,12 +213,7 @@ class RecordingManager: ObservableObject {
                 }
             }
             
-            // Restore user's previous clipboard after streaming completes
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                TextInjector.shared.restorePasteboard(savedItems, to: pasteboard)
-            }
-            
-            // Keep final text visible in pill for 1.4s so user can read it
+            // Keep final text visible in pill for 1.4s so user can read what was dictated
             usleep(1_400_000)
             DispatchQueue.main.async {
                 self.isProcessing = false

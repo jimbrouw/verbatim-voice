@@ -6,5 +6,7 @@
 	<string>Voice& needs access to your microphone to transcribe your voice into text.</string>
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>Voice& needs screen recording access to understand visible technical keywords on your screen for enhanced transcription accuracy.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Voice& uses Apple Events to inject transcribed text into your active cursor position.</string>
 </dict>
 </plist>
