@@ -10,13 +10,13 @@ let package = Package(
         .executable(name: "Verbatim", targets: ["Verbatim"])
     ],
     dependencies: [
-        .package(url: "https://github.com/exPHAT/SwiftWhisper.git", from: "1.2.0")
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.17.7")
     ],
     targets: [
         .executableTarget(
             name: "Verbatim",
             dependencies: [
-                .product(name: "SwiftWhisper", package: "SwiftWhisper")
+                .product(name: "FluidAudio", package: "FluidAudio")
             ],
             path: ".",
             exclude: [
@@ -34,7 +34,10 @@ let package = Package(
                 "venv",
                 "scripts",
                 "dist",
-                "assets"
+                "assets",
+                "PythonServerManager.swift",
+                "MLXTranscriber.swift",
+                "WhisperManager.swift"
             ]
         )
     ]

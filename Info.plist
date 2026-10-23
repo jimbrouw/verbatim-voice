@@ -3,6 +3,8 @@
 <plist version="1.0">
 <dict>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Verbatim needs access to your microphone to transcribe your voice into text.</string>
+	<string>Voice& needs access to your microphone to transcribe your voice into text.</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>Voice& needs screen recording access to understand visible technical keywords on your screen for enhanced transcription accuracy.</string>
 </dict>
 </plist>

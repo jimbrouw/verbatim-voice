@@ -10,14 +10,14 @@ class RecordingManager: ObservableObject {
     @Published var streamingText = ""
     
     let audioManager = AudioManager()
-    let mlxTranscriber = MLXTranscriber()
+    let transcriber = FluidTranscriber.shared
     private var lastRecordingURL: URL?
     private var recordingStartTime: Date?
     private var pendingStartWorkItem: DispatchWorkItem?
     private var capturedFocusedElement: AXUIElement?
     private var targetApplication: NSRunningApplication?
     
-    private let minimumRecordingDuration: TimeInterval = 0.5 // seconds
+    private let minimumRecordingDuration: TimeInterval = 0.4 // seconds
     
     func startRecording() {
         // Don't start a new recording while processing
@@ -26,10 +26,13 @@ class RecordingManager: ObservableObject {
             return
         }
         
-        // 1. Play sound first
+        // 1. Pause media playback (Spotify / Music / VLC)
+        MediaManager.shared.pausePlaybackIfNeeded()
+        
+        // 2. Play sound
         SoundManager.shared.playStartSound()
         
-        // Capture frontmost application and focused element where the cursor currently is
+        // Capture frontmost application and focused element where cursor currently is
         var front = NSWorkspace.shared.frontmostApplication
         if front?.bundleIdentifier == Bundle.main.bundleIdentifier {
             front = NSWorkspace.shared.runningApplications.first(where: {
@@ -39,38 +42,50 @@ class RecordingManager: ObservableObject {
         self.targetApplication = front
         self.capturedFocusedElement = AccessibilityContext.shared.getFocusedElement()
         
-        // 2. Wait 300ms for beep to finish before starting mic tap
+        // Capture active on-screen technical keywords for context bias
+        ScreenContext.shared.captureFocusedWindowKeywords(for: front?.processIdentifier)
+        
+        // Start audio capture
         pendingStartWorkItem?.cancel()
-        let workItem = DispatchWorkItem { [weak self] in
-            guard let self = self else { return }
-            self.pendingStartWorkItem = nil
-            guard !self.isRecording, !self.isProcessing else { return }
-            
-            do {
-                self.lastRecordingURL = try self.audioManager.startRecording()
-                self.recordingStartTime = Date()
-                self.streamingText = ""
-                self.isRecording = true
-                print("🎙️ Started recording (post-beep)")
-            } catch {
-                print("❌ Failed to start recording: \(error)")
-            }
+        do {
+            self.lastRecordingURL = try self.audioManager.startRecording()
+            self.recordingStartTime = Date()
+            self.streamingText = ""
+            self.isRecording = true
+            print("🎙️ Started native recording session")
+        } catch {
+            print("❌ Failed to start recording: \(error)")
         }
-        pendingStartWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: workItem)
     }
     
     func startHandsFreeRecording() {
-        guard !isRecording, !isProcessing else { return }
+        guard !isProcessing else { return }
         isHandsFreeMode = true
-        print("🎙️ Hands-free recording started")
-        startRecording()
+        print("🎙️ Hands-free recording mode active")
+        if !isRecording {
+            startRecording()
+        }
     }
     
     func stopHandsFreeRecording() {
         guard isHandsFreeMode else { return }
         print("🛑 Hands-free recording stopped")
         stopRecording()
+    }
+    
+    /// Silently discards accidental key taps (<0.4s) with zero sound, zero errors, and zero transcription
+    func silentDiscard() {
+        pendingStartWorkItem?.cancel()
+        pendingStartWorkItem = nil
+        if isRecording {
+            audioManager.stopRecording()
+            audioManager.currentAmplitude = 0.0
+            isRecording = false
+        }
+        isHandsFreeMode = false
+        streamingText = ""
+        MediaManager.shared.resumePlaybackIfNeeded()
+        print("🔇 [RecordingManager] Recording silently discarded (<0.4s tap)")
     }
     
     func cancelRecording() {
@@ -82,6 +97,8 @@ class RecordingManager: ObservableObject {
             isRecording = false
         }
         isHandsFreeMode = false
+        streamingText = ""
+        MediaManager.shared.resumePlaybackIfNeeded()
         print("🚫 Recording cancelled")
     }
     
@@ -91,6 +108,7 @@ class RecordingManager: ObservableObject {
         
         guard isRecording else {
             isHandsFreeMode = false
+            MediaManager.shared.resumePlaybackIfNeeded()
             return
         }
         
@@ -98,7 +116,7 @@ class RecordingManager: ObservableObject {
         audioManager.currentAmplitude = 0.0 // Reset waveform
         isRecording = false
         isHandsFreeMode = false
-        SoundManager.shared.playStopSound()
+        MediaManager.shared.resumePlaybackIfNeeded()
         
         guard let url = lastRecordingURL else { return }
         
@@ -106,7 +124,7 @@ class RecordingManager: ObservableObject {
         if let startTime = recordingStartTime {
             let duration = Date().timeIntervalSince(startTime)
             if duration < minimumRecordingDuration {
-                print("⚠️ Recording too short (\(String(format: "%.2f", duration))s) — skipping transcription")
+                print("⚠️ Recording too short (\(String(format: "%.2f", duration))s) — discarding silently")
                 return
             }
         }
@@ -117,6 +135,8 @@ class RecordingManager: ObservableObject {
             return
         }
         
+        SoundManager.shared.playStopSound()
+        
         // Check file exists and has content
         let fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
         guard fileSize > 1000 else {
@@ -124,10 +144,10 @@ class RecordingManager: ObservableObject {
             return
         }
         
-        print("Stopped recording. File size: \(fileSize) bytes. Starting local transcription...")
+        print("Stopped recording. File size: \(fileSize) bytes. Starting in-process CoreML ASR...")
         isProcessing = true
         
-        mlxTranscriber.transcribe(audioURL: url) { [weak self] text in
+        transcriber.transcribe(audioURL: url) { [weak self] text in
             guard let self = self else { return }
             
             guard let rawText = text, !rawText.isEmpty else {

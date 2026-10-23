@@ -20,24 +20,49 @@ public class TextFormatter {
         loadDictionary()
     }
     
+    public var dictionaryCount: Int {
+        return dictionary.count
+    }
+    
+    public func mergeDictionary(entries: [String: String]) {
+        for (key, val) in entries {
+            dictionary[key] = val
+        }
+        saveDictionary()
+    }
+    
+    private func saveDictionary() {
+        let fileManager = FileManager.default
+        let appSupportURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("Voice&")
+        guard let dir = appSupportURL else { return }
+        try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
+        let dictURL = dir.appendingPathComponent(dictionaryFileName)
+        if let data = try? JSONSerialization.data(withJSONObject: dictionary, options: [.prettyPrinted, .sortedKeys]) {
+            try? data.write(to: dictURL)
+            print("💾 [TextFormatter] Saved dictionary with \(dictionary.count) entries to \(dictURL.path)")
+        }
+    }
+    
     // MARK: - Personal Dictionary
     
     public func loadDictionary() {
         let fileManager = FileManager.default
-        let appSupportURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("Verbatim")
-        
-        let customDictURL = appSupportURL?.appendingPathComponent(dictionaryFileName)
+        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        let voiceAndURL = appSupport?.appendingPathComponent("Voice&/\(dictionaryFileName)")
+        let verbatimURL = appSupport?.appendingPathComponent("Verbatim/\(dictionaryFileName)")
         let localDictURL = URL(fileURLWithPath: dictionaryFileName)
         
         var targetURL: URL?
-        if let customDictURL = customDictURL, fileManager.fileExists(atPath: customDictURL.path) {
-            targetURL = customDictURL
+        if let voiceAndURL = voiceAndURL, fileManager.fileExists(atPath: voiceAndURL.path) {
+            targetURL = voiceAndURL
+        } else if let verbatimURL = verbatimURL, fileManager.fileExists(atPath: verbatimURL.path) {
+            targetURL = verbatimURL
         } else if fileManager.fileExists(atPath: localDictURL.path) {
             targetURL = localDictURL
-        } else if let customDictURL = customDictURL {
-            createDefaultDictionary(at: customDictURL)
-            targetURL = customDictURL
+        } else if let voiceAndURL = voiceAndURL {
+            createDefaultDictionary(at: voiceAndURL)
+            targetURL = voiceAndURL
         }
         
         guard let url = targetURL,
@@ -76,10 +101,22 @@ public class TextFormatter {
             return FormattedInjection(text: "", shouldPressEnter: false)
         }
         
-        // 1. Personal Dictionary replacement pass
+        // 1. Wispr Flow Natural-Language Backtracking & Self-Correction pass
+        text = SmartBacktracker.shared.process(text)
+        guard !text.isEmpty else {
+            return FormattedInjection(text: "", shouldPressEnter: false)
+        }
+        
+        // 2. Personal Dictionary replacement pass
         text = applyDictionaryReplacements(to: text)
         
-        // 2. Voice command: "press enter" / "press return" at end of utterance
+        // 3. Screen Context pass (match exact on-screen casing for technical identifiers)
+        text = ScreenContext.shared.harmonizeWithScreenContext(text)
+        
+        // 4. Dyslexia Phonetic Homophone Disambiguation
+        text = DyslexiaTranslator.shared.disambiguateHomophones(text)
+        
+        // 5. Voice command: "press enter" / "press return" at end of utterance
         let (commandFreeText, shouldPressEnter) = extractPressEnterCommand(from: text)
         text = commandFreeText
         
@@ -87,10 +124,10 @@ public class TextFormatter {
             return FormattedInjection(text: "", shouldPressEnter: shouldPressEnter)
         }
         
-        // 3. Context-aware capitalization based on beforeText
+        // 6. Context-aware capitalization based on beforeText
         text = applyContextualCapitalization(text: text, beforeText: context.beforeText)
         
-        // 4. Context-aware leading space
+        // 7. Context-aware leading space
         text = applyContextualLeadingSpace(text: text, beforeText: context.beforeText)
         
         return FormattedInjection(text: text, shouldPressEnter: shouldPressEnter)

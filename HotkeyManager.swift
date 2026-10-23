@@ -5,16 +5,20 @@ class HotkeyManager: ObservableObject {
     private var eventMonitor: Any?
     private var eventTapPort: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    private var tapThread: Thread?
+    private var tapRunLoop: CFRunLoop?
     
     private var recordingManager: RecordingManager
     private var isActivationKeyDown = false
     private var activationPressStartedAt: Date?
     private var lastTapReleasedAt: Date?
-    private var shouldIgnoreCurrentRelease = false
+    private var quickTapGraceWorkItem: DispatchWorkItem?
+    private var isPromotedToHandsFree = false
+    private var isDoubleTapSecondPress = false
     
-    // Wispr Flow timing constant: DICTATION_DEBOUNCE_DELAY = 500ms
-    private let doubleTapWindow: TimeInterval = 0.50
-    private let tapMaximumDuration: TimeInterval = 0.30
+    // Monologue 600ms effective double-tap / silent-discard window
+    private let minimumHoldDuration: TimeInterval = 0.40 // <0.4s is a quick tap candidate
+    private let doubleTapGraceWindow: TimeInterval = 0.60 // 600ms window to double-tap or silently discard
     
     // Accessibility check result
     @Published var isAccessibilityEnabled: Bool = false
@@ -22,27 +26,37 @@ class HotkeyManager: ObservableObject {
     init(recordingManager: RecordingManager) {
         self.recordingManager = recordingManager
         checkAccessibilityPermissions()
-        setupEventTapOrMonitor()
+        startEventTapThread()
     }
     
     func checkAccessibilityPermissions() {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
         isAccessibilityEnabled = AXIsProcessTrustedWithOptions(options as CFDictionary)
-        print("Accessibility Enabled: \(isAccessibilityEnabled)")
+        print("🔑 [HotkeyManager] Accessibility Enabled: \(isAccessibilityEnabled)")
     }
     
-    private func setupEventTapOrMonitor() {
-        if isAccessibilityEnabled {
-            setupEventTap()
+    // MARK: - Dedicated EventTap Thread
+    
+    private func startEventTapThread() {
+        guard isAccessibilityEnabled else {
+            print("⚠️ [HotkeyManager] Accessibility not granted, using NSEvent global monitor fallback")
+            setupGlobalMonitor()
+            return
         }
         
-        // Auxiliary or fallback monitor if event tap is unavailable
-        if eventTapPort == nil {
-            setupGlobalMonitor()
+        let thread = Thread { [weak self] in
+            guard let self = self else { return }
+            self.tapRunLoop = CFRunLoopGetCurrent()
+            self.setupEventTapOnCurrentThread()
+            CFRunLoopRun()
         }
+        thread.name = "com.verbatim.key-event-tap"
+        thread.qualityOfService = .userInteractive
+        self.tapThread = thread
+        thread.start()
     }
     
-    private func setupEventTap() {
+    private func setupEventTapOnCurrentThread() {
         let eventMask = (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue)
         let observer = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
         
@@ -58,56 +72,90 @@ class HotkeyManager: ObservableObject {
             },
             userInfo: observer
         ) else {
-            print("⚠️ CGEvent.tapCreate could not be created; falling back to NSEvent global monitor")
+            print("⚠️ [HotkeyManager] CGEvent.tapCreate failed; falling back to global monitor")
+            DispatchQueue.main.async { self.setupGlobalMonitor() }
             return
         }
         
         self.eventTapPort = port
         let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, port, 0)
         self.runLoopSource = source
-        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
         CGEvent.tapEnable(tap: port, enable: true)
-        print("🎯 Low-level CGEventTap registered successfully")
+        print("🎯 [HotkeyManager] Low-level CGEventTap running on dedicated thread")
     }
     
+    // MARK: - Event Handler
+    
     private func handleCGEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
-        // Automatically re-enable if macOS disables the tap due to timeout
+        // Auto-reconnect if macOS disables the tap under heavy load or timeout
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            print("⚠️ [HotkeyManager] Event tap disabled by macOS (\(type.rawValue)), auto-re-enabling...")
             if let port = eventTapPort {
                 CGEvent.tapEnable(tap: port, enable: true)
+            }
+            // Synthesize key release if modifier got stuck
+            if isActivationKeyDown {
+                reconcileStaleModifiers()
             }
             return Unmanaged.passUnretained(event)
         }
         
-        // Support Escape key (keycode 53) to cancel/commit hands-free mode or dismiss Summary Card
+        // Key Down Events (Esc, Spacebar)
         if type == .keyDown {
             let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
             let flags = event.flags
             
+            // 1. Escape (Keycode 53) -> Instant Discard / Cancel
             if keyCode == 53 {
                 if SummaryCardWindow.shared.isVisible {
                     DispatchQueue.main.async {
                         SummaryCardWindow.shared.dismiss()
                     }
-                    return nil
+                    return nil // swallow Esc
                 }
-                if recordingManager.isHandsFreeMode {
+                
+                if recordingManager.isRecording || recordingManager.isHandsFreeMode || quickTapGraceWorkItem != nil {
+                    quickTapGraceWorkItem?.cancel()
+                    quickTapGraceWorkItem = nil
+                    isActivationKeyDown = false
+                    isPromotedToHandsFree = false
+                    activationPressStartedAt = nil
+                    lastTapReleasedAt = nil
+                    
                     DispatchQueue.main.async {
-                        self.recordingManager.stopHandsFreeRecording()
+                        self.recordingManager.cancelRecording()
                     }
-                    return nil // swallow Escape
+                    print("🚫 [HotkeyManager] Escape pressed — dictation aborted")
+                    return nil // swallow Esc
                 }
                 return Unmanaged.passUnretained(event)
             }
             
-            // Option + Space (Keycode 49) triggers Voice& Dyslexia Plain-English Summary HUD
-            if keyCode == 49 && flags.contains(.maskAlternate) && !flags.contains(.maskCommand) && !flags.contains(.maskControl) {
+            // 2. Spacebar (Keycode 49) while holding activation key -> Promote to Hands-Free!
+            if keyCode == 49 && isActivationKeyDown && !recordingManager.isHandsFreeMode {
+                // If user is holding hotkey and taps spacebar, promote directly to hands-free lock!
+                isPromotedToHandsFree = true
+                quickTapGraceWorkItem?.cancel()
+                quickTapGraceWorkItem = nil
+                
+                DispatchQueue.main.async {
+                    self.recordingManager.startHandsFreeRecording()
+                }
+                print("🔒 [HotkeyManager] Promoted active recording to Hands-Free Lock via Spacebar")
+                return nil // swallow Space
+            }
+            
+            // 3. Option + Space (Keycode 49) when NOT dictating -> Voice& Dyslexia Plain-English HUD
+            if keyCode == 49 && flags.contains(.maskAlternate) && !flags.contains(.maskCommand) && !flags.contains(.maskControl) && !recordingManager.isRecording {
                 triggerPlainEnglishSummary()
                 return nil // swallow Space
             }
+            
             return Unmanaged.passUnretained(event)
         }
         
+        // Modifier Key Events (Activation Hotkey)
         if type == .flagsChanged {
             let flags = event.flags
             let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
@@ -118,14 +166,120 @@ class HotkeyManager: ObservableObject {
             
             if isTargetKey {
                 handleActivationKey(isPressed: isPressed)
-                // Swallow activation key (especially Fn/Globe key) so macOS does not trigger
-                // input source switching or character palettes that steal focus from the text field
+                // Swallow activation key to prevent macOS focus theft
                 return nil
             }
         }
         
         return Unmanaged.passUnretained(event)
     }
+    
+    // MARK: - Activation Key State Machine (Monologue Dual-Threshold)
+    
+    private func handleActivationKey(isPressed: Bool) {
+        if isPressed && !isActivationKeyDown {
+            // === KEY DOWN ===
+            isActivationKeyDown = true
+            let now = Date()
+            activationPressStartedAt = now
+            
+            // Case A: User was in Hands-Free Locked Mode -> Single tap exits and pastes
+            if recordingManager.isHandsFreeMode {
+                print("🛑 [HotkeyManager] Tapped while in Hands-Free mode -> stopping and pasting")
+                DispatchQueue.main.async {
+                    self.recordingManager.stopHandsFreeRecording()
+                }
+                return
+            }
+            
+            // Case B: Second tap within 600ms window -> Lock into Hands-Free!
+            if let lastRelease = lastTapReleasedAt, now.timeIntervalSince(lastRelease) <= doubleTapGraceWindow {
+                print("🔒 [HotkeyManager] Double-tap detected within \(String(format: "%.0f", now.timeIntervalSince(lastRelease) * 1000))ms -> Locking into Hands-Free Mode!")
+                quickTapGraceWorkItem?.cancel()
+                quickTapGraceWorkItem = nil
+                lastTapReleasedAt = nil
+                isDoubleTapSecondPress = true
+                
+                DispatchQueue.main.async {
+                    self.recordingManager.startHandsFreeRecording()
+                }
+                return
+            }
+            
+            // Case C: New interaction started -> Start recording immediately
+            lastTapReleasedAt = nil
+            isPromotedToHandsFree = false
+            isDoubleTapSecondPress = false
+            
+            DispatchQueue.main.async {
+                self.recordingManager.startRecording()
+            }
+            
+        } else if !isPressed && isActivationKeyDown {
+            // === KEY UP ===
+            isActivationKeyDown = false
+            let now = Date()
+            let pressDuration = activationPressStartedAt.map { now.timeIntervalSince($0) } ?? 0
+            activationPressStartedAt = nil
+            
+            // If this press was promoted to hands-free via Spacebar or second double-tap press, ignore the release
+            if isPromotedToHandsFree || isDoubleTapSecondPress {
+                isPromotedToHandsFree = false
+                isDoubleTapSecondPress = false
+                return
+            }
+            
+            // If already in hands-free mode, do nothing on release
+            if recordingManager.isHandsFreeMode {
+                return
+            }
+            
+            // Monologue Rule: Hold > 0.4s is Push-to-Talk. Releasing finishes and pastes.
+            if pressDuration >= minimumHoldDuration {
+                print("🎙️ [HotkeyManager] Hold-to-Talk finished (\(String(format: "%.2f", pressDuration))s) -> committing")
+                lastTapReleasedAt = nil
+                DispatchQueue.main.async {
+                    self.recordingManager.stopRecording()
+                }
+            } else {
+                // Monologue Rule: Quick tap (<0.4s). Open 600ms grace window for double-tap lock.
+                // If no 2nd tap arrives before 600ms expires, silently discard with NO sound and NO error.
+                print("⏳ [HotkeyManager] Quick tap (\(String(format: "%.2f", pressDuration))s) -> opening 600ms grace window...")
+                lastTapReleasedAt = now
+                
+                quickTapGraceWorkItem?.cancel()
+                let workItem = DispatchWorkItem { [weak self] in
+                    guard let self = self else { return }
+                    self.lastTapReleasedAt = nil
+                    self.quickTapGraceWorkItem = nil
+                    
+                    // 600ms expired without second tap -> SILENT DISCARD
+                    print("🔇 [HotkeyManager] 600ms window expired with no second tap -> Silent Discard")
+                    DispatchQueue.main.async {
+                        self.recordingManager.silentDiscard()
+                    }
+                }
+                quickTapGraceWorkItem = workItem
+                DispatchQueue.main.asyncAfter(deadline: .now() + doubleTapGraceWindow, execute: workItem)
+            }
+        }
+    }
+    
+    // MARK: - Defensive Engineering: Reconcile Stuck Modifiers
+    
+    private func reconcileStaleModifiers() {
+        isActivationKeyDown = false
+        activationPressStartedAt = nil
+        let src = CGEventSource(stateID: .hidSystemState)
+        let optKey: CGKeyCode = 0x3A // Right Option / Alt
+        if let keyUp = CGEvent(keyboardEventSource: src, virtualKey: optKey, keyDown: false) {
+            keyUp.flags = []
+            keyUp.post(tap: .cghidEventTap)
+            print("🛡️ [HotkeyManager] Synthesized modifier key-up to prevent stuck modifier state")
+        }
+    }
+    
+    // MARK: - Fallback Global Monitor
     
     private func setupGlobalMonitor() {
         eventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] event in
@@ -134,17 +288,21 @@ class HotkeyManager: ObservableObject {
             if event.type == .keyDown {
                 if event.keyCode == 53 {
                     if SummaryCardWindow.shared.isVisible {
-                        DispatchQueue.main.async {
-                            SummaryCardWindow.shared.dismiss()
-                        }
+                        DispatchQueue.main.async { SummaryCardWindow.shared.dismiss() }
                         return
                     }
-                    if self.recordingManager.isHandsFreeMode {
-                        DispatchQueue.main.async {
-                            self.recordingManager.stopHandsFreeRecording()
-                        }
+                    if self.recordingManager.isRecording || self.recordingManager.isHandsFreeMode {
+                        self.quickTapGraceWorkItem?.cancel()
+                        self.quickTapGraceWorkItem = nil
+                        DispatchQueue.main.async { self.recordingManager.cancelRecording() }
                         return
                     }
+                }
+                
+                if event.keyCode == 49 && self.isActivationKeyDown && !self.recordingManager.isHandsFreeMode {
+                    self.isPromotedToHandsFree = true
+                    DispatchQueue.main.async { self.recordingManager.startHandsFreeRecording() }
+                    return
                 }
                 
                 if event.keyCode == 49 && event.modifierFlags.contains(.option) && !event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.control) {
@@ -163,7 +321,8 @@ class HotkeyManager: ObservableObject {
     
     private func triggerPlainEnglishSummary() {
         if isActivationKeyDown {
-            shouldIgnoreCurrentRelease = true
+            quickTapGraceWorkItem?.cancel()
+            quickTapGraceWorkItem = nil
             DispatchQueue.main.async {
                 self.recordingManager.cancelRecording()
             }
@@ -181,57 +340,11 @@ class HotkeyManager: ObservableObject {
         }
     }
     
-    private func handleActivationKey(isPressed: Bool) {
-        if isPressed && !isActivationKeyDown {
-            self.isActivationKeyDown = true
-            self.activationPressStartedAt = Date()
-            
-            if self.recordingManager.isHandsFreeMode {
-                self.shouldIgnoreCurrentRelease = true
-                DispatchQueue.main.async {
-                    self.recordingManager.stopHandsFreeRecording()
-                }
-                return
-            }
-            
-            if let lastTapReleasedAt = self.lastTapReleasedAt,
-               Date().timeIntervalSince(lastTapReleasedAt) <= self.doubleTapWindow {
-                self.lastTapReleasedAt = nil
-                self.shouldIgnoreCurrentRelease = true
-                DispatchQueue.main.async {
-                    self.recordingManager.startHandsFreeRecording()
-                }
-            } else {
-                // Key pressed (hold-to-record started)
-                DispatchQueue.main.async {
-                    self.recordingManager.startRecording()
-                }
-            }
-        } else if !isPressed && isActivationKeyDown {
-            self.isActivationKeyDown = false
-            let now = Date()
-            let pressDuration = self.activationPressStartedAt.map { now.timeIntervalSince($0) } ?? 0
-            self.activationPressStartedAt = nil
-            
-            if self.shouldIgnoreCurrentRelease {
-                self.shouldIgnoreCurrentRelease = false
-                return
-            }
-            
-            if pressDuration <= self.tapMaximumDuration {
-                self.lastTapReleasedAt = now
-            } else {
-                self.lastTapReleasedAt = nil
-            }
-            
-            // Key released (hold-to-record ended)
-            DispatchQueue.main.async {
-                self.recordingManager.stopRecording()
-            }
-        }
-    }
-    
     deinit {
+        quickTapGraceWorkItem?.cancel()
+        if let runLoop = tapRunLoop {
+            CFRunLoopStop(runLoop)
+        }
         if let source = runLoopSource {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
         }

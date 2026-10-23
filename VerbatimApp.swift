@@ -25,12 +25,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupStatusMenu()
         checkAccessibility()
         
-        // Start the MLX Python server
-        PythonServerManager.shared.startServer()
+        // Pre-warm in-process CoreML ASR (Apple Neural Engine)
+        FluidTranscriber.shared.startBackgroundInitialization()
+        
+        // 1-Click Wispr Flow Dictionary Auto-Migration
+        if WisprFlowImporter.shared.isWisprFlowInstalled && TextFormatter.shared.dictionaryCount <= 3 {
+            WisprFlowImporter.shared.importFromWisprFlow()
+        }
     }
     
     func applicationWillTerminate(_ notification: Notification) {
-        PythonServerManager.shared.stopServer()
+        // Zero external python processes to kill — 100% native in-process!
     }
     
     private func checkAccessibility() {
@@ -58,6 +63,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Dyslexia TL;DR (⌥ Space)", action: #selector(showPlainEnglishSummary), keyEquivalent: " "))
+        
+        if WisprFlowImporter.shared.isWisprFlowInstalled {
+            menu.addItem(NSMenuItem(title: "Import from Wispr Flow", action: #selector(importWisprFlow), keyEquivalent: "i"))
+        }
+        
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Settings", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem.separator())
@@ -65,6 +75,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         item.menu = menu
         statusItem = item
+    }
+
+    @objc private func importWisprFlow() {
+        let result = WisprFlowImporter.shared.importFromWisprFlow()
+        switch result {
+        case .success(let summary):
+            print("✅ Imported \(summary.wordsCount) words and \(summary.snippetsCount) snippets from Wispr Flow!")
+        case .failure(let error):
+            print("❌ Wispr Flow import failed: \(error.localizedDescription)")
+        }
     }
 
     @objc private func showPlainEnglishSummary() {
