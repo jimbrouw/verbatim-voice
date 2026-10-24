@@ -1,8 +1,8 @@
 import AppKit
 
 enum ActivationKey: String, CaseIterable, Identifiable {
-    case option
     case function
+    case option
     case control
 
     static let defaultsKey = "activationKey"
@@ -33,8 +33,8 @@ enum ActivationKey: String, CaseIterable, Identifiable {
 
     static var current: ActivationKey {
         get {
-            let rawValue = UserDefaults.standard.string(forKey: defaultsKey) ?? ActivationKey.option.rawValue
-            return ActivationKey(rawValue: rawValue) ?? .option
+            let rawValue = UserDefaults.standard.string(forKey: defaultsKey) ?? ActivationKey.function.rawValue
+            return ActivationKey(rawValue: rawValue) ?? .function
         }
         set {
             UserDefaults.standard.set(newValue.rawValue, forKey: defaultsKey)

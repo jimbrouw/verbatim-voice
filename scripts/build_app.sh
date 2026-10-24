@@ -59,8 +59,19 @@ if [[ -f "$ROOT_DIR/assets/generated/Verbatim.icns" ]]; then
   cp "$ROOT_DIR/assets/generated/Verbatim.icns" "$RESOURCES_DIR/Voice&.icns"
 fi
 
-echo "🔏 Ad-hoc code signing..."
-codesign --force --deep --sign - "$APP_DIR"
+# Sign with a stable certificate so macOS TCC permissions (Accessibility, Microphone,
+# Screen Recording) survive rebuilds. Ad-hoc signatures pin the grant to the binary's
+# cdhash, which changes on every build and silently revokes Accessibility.
+# Override with: SIGN_IDENTITY="<name or SHA-1>" ./scripts/build_app.sh
+SIGN_IDENTITY="${SIGN_IDENTITY:-$(security find-identity -v -p codesigning | grep -m1 'Apple Development' | awk '{print $2}')}"
+if [[ -n "$SIGN_IDENTITY" ]]; then
+  echo "🔏 Code signing with stable identity $SIGN_IDENTITY..."
+  codesign --force --deep --sign "$SIGN_IDENTITY" "$APP_DIR"
+else
+  echo "⚠️  No signing identity found — falling back to ad-hoc (Accessibility must be re-granted after every build)"
+  codesign --force --deep --sign - "$APP_DIR"
+fi
+codesign -d -r- "$APP_DIR" 2>&1 | grep designated || true
 
 ZIP_NAME="VoiceAnd-v2.0.0-macOS-arm64.zip"
 echo "🗜️ Packaging $ZIP_NAME..."

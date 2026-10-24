@@ -173,7 +173,8 @@ class RecordingManager: ObservableObject {
     }
     
     private func injectFormattedText(_ formattedText: String, shouldPressEnter: Bool) {
-        guard !formattedText.isEmpty else {
+        let tokens = TextInjector.shared.tokenizeIntoWords(text: formattedText)
+        guard !tokens.isEmpty else {
             DispatchQueue.main.async {
                 self.isProcessing = false
                 self.streamingText = ""
@@ -181,29 +182,60 @@ class RecordingManager: ObservableObject {
             return
         }
         
-        // Show dictated result immediately in floating pill HUD
-        DispatchQueue.main.async {
-            self.streamingText = formattedText
-        }
-        
         let targetApp = self.targetApplication
         self.targetApplication = nil
         let targetElement = self.capturedFocusedElement ?? AccessibilityContext.shared.getFocusedElement()
         self.capturedFocusedElement = nil
         
+        let pasteboard = NSPasteboard.general
+        let savedItems = TextInjector.shared.backupPasteboard(pasteboard)
+        
         DispatchQueue.global(qos: .userInteractive).async { [weak self] in
             guard let self = self else { return }
             
-            // Ensure target application is active before typing/pasting
+            // Re-activate target app if it lost focus
             if let app = targetApp, !app.isActive {
                 DispatchQueue.main.async {
                     app.activate()
                 }
-                usleep(50_000) // 50ms for window server focus switch
+                usleep(40_000)
             }
             
-            // Inject complete text at cursor position (AX direct or transient zero-pollution pasteboard)
-            TextInjector.shared.inject(text: formattedText, targetElement: targetElement)
+            var accumulatedText = ""
+            var useAX = AXIsProcessTrusted() && targetElement != nil && TextInjector.shared.canUseAXInjection(on: targetElement!)
+            print("⌨️ [RecordingManager] Injecting \(tokens.count) tokens into \(targetApp?.localizedName ?? "unknown") (trusted: \(AXIsProcessTrusted()), AX settable: \(useAX))")
+            
+            for (index, token) in tokens.enumerated() {
+                accumulatedText.append(token)
+                let currentSnapshot = accumulatedText
+                
+                // 1. Update UI pill in real time
+                DispatchQueue.main.async {
+                    self.streamingText = currentSnapshot
+                }
+                
+                // 2. Type word directly into active text box at caret
+                if index == 0, useAX, let element = targetElement {
+                    // Verify the first word really landed; some apps (Electron) fake AX success
+                    if TextInjector.shared.injectTokenDirectlyVerified(token, to: element) {
+                        print("✅ [RecordingManager] AX insertion verified — streaming via Accessibility")
+                    } else {
+                        print("📋 [RecordingManager] AX insertion not effective — switching to Cmd+V paste")
+                        useAX = false
+                        TextInjector.shared.injectTokenViaPasteboard(token)
+                    }
+                } else if useAX, let element = targetElement, TextInjector.shared.injectTokenDirectly(token, to: element) {
+                    // Direct AX insertion succeeded
+                } else {
+                    // Rock-solid token-by-token Cmd+V paste with hardware modifier sequence
+                    TextInjector.shared.injectTokenViaPasteboard(token)
+                }
+                
+                // 65ms natural typewriter cadence between words
+                if index < tokens.count - 1 {
+                    usleep(65_000)
+                }
+            }
             
             // Handle spoken command "press enter"
             if shouldPressEnter {
@@ -213,7 +245,12 @@ class RecordingManager: ObservableObject {
                 }
             }
             
-            // Keep final text visible in pill for 1.4s so user can read what was dictated
+            // Restore user's previous clipboard after streaming completes
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                TextInjector.shared.restorePasteboard(savedItems, to: pasteboard)
+            }
+            
+            // Keep final text visible in pill for 1.4s so user can read it
             usleep(1_400_000)
             DispatchQueue.main.async {
                 self.isProcessing = false
