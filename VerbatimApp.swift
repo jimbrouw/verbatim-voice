@@ -91,7 +91,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             modesMenu.addItem(modeItem)
         }
-        let modeParent = NSMenuItem(title: "Mode: \(ModeManager.shared.currentMode.rawValue)", action: nil, keyEquivalent: "")
+        let modeLabel = ModeManager.shared.currentMode == .auto
+            ? "Mode: Auto (\(ModeManager.shared.effectiveMode.rawValue))"
+            : "Mode: \(ModeManager.shared.currentMode.rawValue)"
+        let modeParent = NSMenuItem(title: modeLabel, action: nil, keyEquivalent: "")
         modeParent.submenu = modesMenu
         menu.addItem(modeParent)
         
@@ -172,12 +175,14 @@ struct SettingsView: View {
     @AppStorage(ActivationKey.defaultsKey) private var activationKeyRawValue = ActivationKey.function.rawValue
     @ObservedObject var modeManager = ModeManager.shared
     @ObservedObject var historyManager = HistoryManager.shared
+    @ObservedObject var audioManager = AudioManager.shared
     
     @State private var dictionaryEntries: [(phrase: String, replacement: String)] = []
     @State private var searchDictQuery: String = ""
     @State private var newPhrase: String = ""
     @State private var newReplacement: String = ""
     @State private var selectedTab: Int = 0
+    @State private var isTestingMic: Bool = false
     
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -195,28 +200,42 @@ struct SettingsView: View {
                 }
                 .tag(1)
             
-            // Tab 3: History & Stats
+            // Tab 3: Audio & Devices
+            audioTab
+                .tabItem {
+                    Label("Audio", systemImage: "mic.fill")
+                }
+                .tag(2)
+            
+            // Tab 4: History & Stats
             historyTab
                 .tabItem {
                     Label("History", systemImage: "clock.arrow.circlepath")
                 }
-                .tag(2)
+                .tag(3)
         }
         .padding(16)
-        .frame(width: 520, height: 420)
+        .frame(width: 540, height: 440)
         .onAppear {
             loadDictionary()
+            audioManager.refreshAvailableDevices()
+        }
+        .onDisappear {
+            if isTestingMic {
+                audioManager.stopTestMetering()
+                isTestingMic = false
+            }
         }
     }
     
     // MARK: - Tab 1: General
     
     private var generalTab: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 14) {
             Text("Voice& Dictation Engine")
                 .font(.headline)
             
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text("Activation Hotkey:")
                     .font(.subheadline)
                     .fontWeight(.medium)
@@ -235,7 +254,7 @@ struct SettingsView: View {
             
             Divider()
             
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text("Active Dictation Mode:")
                     .font(.subheadline)
                     .fontWeight(.medium)
@@ -286,6 +305,10 @@ struct SettingsView: View {
                 }
             }
             
+            Text("Tip: Snippets support dynamic macros {date}, {time}, {year}, and {clipboard}. Dictate 'insert [phrase]' to trigger.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            
             // Search field
             TextField("Search vocabulary...", text: $searchDictQuery)
                 .textFieldStyle(.roundedBorder)
@@ -316,7 +339,7 @@ struct SettingsView: View {
                 }
             }
             .listStyle(.inset)
-            .frame(maxHeight: 180)
+            .frame(maxHeight: 160)
             
             // Add New Entry Form
             HStack(spacing: 8) {
@@ -336,7 +359,92 @@ struct SettingsView: View {
         }
     }
     
-    // MARK: - Tab 3: History
+    // MARK: - Tab 3: Audio & Devices
+    
+    private var audioTab: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Microphone & Audio Input")
+                .font(.headline)
+            
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Select Input Microphone:")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                
+                Picker("Microphone", selection: Binding(
+                    get: { audioManager.selectedDeviceID },
+                    set: { audioManager.selectDevice(id: $0) }
+                )) {
+                    Text("System Default").tag("")
+                    ForEach(audioManager.availableDevices) { device in
+                        Text(device.name).tag(device.id)
+                    }
+                }
+            }
+            
+            Divider()
+            
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Microphone Input Level Test:")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                
+                HStack(spacing: 12) {
+                    Button(isTestingMic ? "Stop Test" : "Test Microphone") {
+                        if isTestingMic {
+                            audioManager.stopTestMetering()
+                            isTestingMic = false
+                        } else {
+                            audioManager.startTestMetering()
+                            isTestingMic = true
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    
+                    // Live Audio Meter Bar
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule()
+                                .fill(Color.gray.opacity(0.2))
+                            Capsule()
+                                .fill(
+                                    LinearGradient(
+                                        colors: [Color.green, Color.yellow, Color.red],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                                .frame(width: max(4, min(geo.size.width, CGFloat(audioManager.currentAmplitude * 4.0) * geo.size.width)))
+                                .animation(.easeOut(duration: 0.06), value: audioManager.currentAmplitude)
+                        }
+                    }
+                    .frame(height: 12)
+                }
+                
+                Text(isTestingMic ? "Speak into your mic to test audio gain." : "Click 'Test Microphone' to verify your input levels.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            
+            Divider()
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Context & Media Features")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                Text("• Media Ducking: Automatically pauses Spotify, Apple Music, and VLC while recording.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("• Screen OCR: Reads active code tokens from your focused window to assist technical spelling.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            
+            Spacer()
+        }
+    }
+    
+    // MARK: - Tab 4: History
     
     private var historyTab: some View {
         VStack(alignment: .leading, spacing: 10) {

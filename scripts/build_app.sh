@@ -10,7 +10,7 @@ RESOURCES_DIR="$CONTENTS_DIR/Resources"
 
 cd "$ROOT_DIR"
 
-echo "🔨 Building Voice& v3 release binary (In-process CoreML Parakeet ANE)..."
+echo "🔨 Building Voice& v4 release binary (In-process CoreML Parakeet ANE)..."
 swift build -c release
 
 echo "📦 Assembling $APP_NAME.app bundle..."
@@ -38,9 +38,9 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>3.0.0</string>
+  <string>4.0.0</string>
   <key>CFBundleVersion</key>
-  <string>300</string>
+  <string>400</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
   <key>LSUIElement</key>
@@ -73,11 +73,11 @@ else
 fi
 codesign -d -r- "$APP_DIR" 2>&1 | grep designated || true
 
-ZIP_NAME="VoiceAnd-v3.0.0-macOS-arm64.zip"
+ZIP_NAME="VoiceAnd-v4.0.0-macOS-arm64.zip"
 echo "🗜️ Packaging $ZIP_NAME..."
 ditto -c -k --keepParent "$APP_DIR" "$ROOT_DIR/dist/$ZIP_NAME"
 
 echo ""
-echo "✅ Voice& v3 Build Complete!"
+echo "✅ Voice& v4 Build Complete!"
 echo "   Application: $APP_DIR"
 echo "   Release Zip: $ROOT_DIR/dist/$ZIP_NAME"

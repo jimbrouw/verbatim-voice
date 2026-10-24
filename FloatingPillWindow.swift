@@ -7,12 +7,12 @@ import Combine
 /// and smoothly vanishes when dictation is completed and pasted.
 class FloatingPillWindow: NSPanel {
     private var cancellables = Set<AnyCancellable>()
-    private let targetWidth: CGFloat = 520
-    private let targetHeight: CGFloat = 100
+    private let targetWidth: CGFloat = 580
+    private let targetHeight: CGFloat = 110
     
     init(recordingManager: RecordingManager) {
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 100),
+            contentRect: NSRect(x: 0, y: 0, width: 580, height: 110),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -57,9 +57,19 @@ class FloatingPillWindow: NSPanel {
     override var canBecomeMain: Bool { false }
     
     private func positionAtBottomCenter() {
-        let screen = NSScreen.screens.first(where: { NSPointInRect(NSEvent.mouseLocation, $0.frame) }) ?? NSScreen.main ?? NSScreen.screens[0]
+        // Find which screen contains the focused target window or mouse location
+        let mousePoint = NSEvent.mouseLocation
+        let targetRect = WindowHighlightOverlay.getFocusedWindowRect()
+        
+        let screen: NSScreen
+        if let rect = targetRect, let winScreen = NSScreen.screens.first(where: { NSIntersectsRect($0.frame, rect) }) {
+            screen = winScreen
+        } else {
+            screen = NSScreen.screens.first(where: { NSPointInRect(mousePoint, $0.frame) }) ?? NSScreen.main ?? NSScreen.screens[0]
+        }
+        
         let x = screen.visibleFrame.midX - (targetWidth / 2)
-        let y = screen.visibleFrame.minY + 44
+        let y = screen.visibleFrame.minY + 36
         self.setFrame(NSRect(x: x, y: y, width: targetWidth, height: targetHeight), display: true)
     }
     

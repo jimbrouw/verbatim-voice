@@ -9,7 +9,7 @@ class RecordingManager: ObservableObject {
     @Published var lastTranscription = ""
     @Published var streamingText = ""
     
-    let audioManager = AudioManager()
+    let audioManager = AudioManager.shared
     let transcriber = FluidTranscriber.shared
     private var lastRecordingURL: URL?
     private var recordingStartTime: Date?
@@ -41,6 +41,9 @@ class RecordingManager: ObservableObject {
         }
         self.targetApplication = front
         self.capturedFocusedElement = AccessibilityContext.shared.getFocusedElement()
+        
+        // Update context mode based on frontmost application
+        ModeManager.shared.updateEffectiveMode(for: front)
         
         // 4. Capture active on-screen technical keywords for context bias
         ScreenContext.shared.captureFocusedWindowKeywords(for: front?.processIdentifier)
@@ -188,7 +191,7 @@ class RecordingManager: ObservableObject {
         self.capturedFocusedElement = nil
         
         // Log to local dictation history
-        HistoryManager.shared.record(text: formattedText, app: targetApp, mode: ModeManager.shared.currentMode.rawValue)
+        HistoryManager.shared.record(text: formattedText, app: targetApp, mode: ModeManager.shared.effectiveMode.rawValue)
         
         let pasteboard = NSPasteboard.general
         let savedItems = TextInjector.shared.backupPasteboard(pasteboard)

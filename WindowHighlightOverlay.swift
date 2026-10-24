@@ -70,9 +70,9 @@ public class WindowHighlightOverlay: NSPanel {
         })
     }
     
-    private static func getFocusedWindowRect() -> NSRect? {
+    public static func getFocusedWindowRect() -> NSRect? {
         guard var frontApp = NSWorkspace.shared.frontmostApplication,
-              let primaryScreen = NSScreen.screens.first else {
+              let primaryScreen = NSScreen.screens.first(where: { $0.frame.origin == .zero }) ?? NSScreen.screens.first else {
             return nil
         }
         

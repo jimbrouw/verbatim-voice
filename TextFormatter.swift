@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 public struct FormattedInjection {
     public let text: String
@@ -118,7 +119,7 @@ public class TextFormatter {
             return FormattedInjection(text: "", shouldPressEnter: false)
         }
         
-        let currentMode = ModeManager.shared.currentMode
+        let currentMode = ModeManager.shared.effectiveMode
         
         // Fast-path: Blazing Fast mode bypasses all formatting passes
         if currentMode == .blazingFast {
@@ -132,21 +133,24 @@ public class TextFormatter {
             return FormattedInjection(text: "", shouldPressEnter: false)
         }
         
-        // 2. Personal Dictionary replacement pass
+        // 2. Spoken snippet command expansion ("insert [name]" / "snippet [name]")
+        text = applySpokenSnippetCommands(to: text)
+        
+        // 3. Personal Dictionary & Snippet replacement pass with dynamic macro resolution
         text = applyDictionaryReplacements(to: text)
         
-        // 3. Screen Context pass (match exact on-screen casing for technical identifiers)
+        // 4. Screen Context pass (match exact on-screen casing for technical identifiers)
         text = ScreenContext.shared.harmonizeWithScreenContext(text)
         
-        // 4. Dyslexia Phonetic Homophone Disambiguation (unless in Code mode to avoid affecting variable names)
+        // 5. Dyslexia Phonetic Homophone Disambiguation (unless in Code mode to avoid affecting variable names)
         if currentMode != .code {
             text = DyslexiaTranslator.shared.disambiguateHomophones(text)
         }
         
-        // 5. Mode-Specific Formatting (Email, Messaging, Code)
+        // 6. Mode-Specific Formatting (Email, Messaging, Code, Notes)
         text = applyModeFormatting(text: text, mode: currentMode)
         
-        // 6. Voice command: "press enter" / "press return" at end of utterance
+        // 7. Voice command: "press enter" / "press return" at end of utterance
         let (commandFreeText, shouldPressEnter) = extractPressEnterCommand(from: text)
         text = commandFreeText
         
@@ -154,10 +158,10 @@ public class TextFormatter {
             return FormattedInjection(text: "", shouldPressEnter: shouldPressEnter)
         }
         
-        // 7. Context-aware capitalization based on beforeText
+        // 8. Context-aware capitalization based on beforeText
         text = applyContextualCapitalization(text: text, beforeText: context.beforeText)
         
-        // 8. Context-aware leading space
+        // 9. Context-aware leading space
         text = applyContextualLeadingSpace(text: text, beforeText: context.beforeText)
         
         return FormattedInjection(text: text, shouldPressEnter: shouldPressEnter)
@@ -202,8 +206,60 @@ public class TextFormatter {
                 }
             }
             
-        case .code, .defaultMode, .blazingFast:
+        case .notes:
+            // Convert spoken bullet points into clean markdown list
+            result = result.replacingOccurrences(of: #"\b(?:new bullet|bullet point|bullet)\s+"#, with: "\n• ", options: [.regularExpression, .caseInsensitive])
+            
+        case .code, .defaultMode, .blazingFast, .auto:
             break
+        }
+        return result
+    }
+    
+    // MARK: - Dynamic Snippets & Macro Expansion
+    
+    private func resolveSnippetMacros(_ snippet: String) -> String {
+        var result = snippet
+        let now = Date()
+        
+        if result.contains("{date}") {
+            let formatter = DateFormatter()
+            formatter.dateStyle = .long
+            formatter.timeStyle = .none
+            result = result.replacingOccurrences(of: "{date}", with: formatter.string(from: now))
+        }
+        if result.contains("{time}") {
+            let formatter = DateFormatter()
+            formatter.dateStyle = .none
+            formatter.timeStyle = .short
+            result = result.replacingOccurrences(of: "{time}", with: formatter.string(from: now))
+        }
+        if result.contains("{year}") {
+            let year = Calendar.current.component(.year, from: now)
+            result = result.replacingOccurrences(of: "{year}", with: "\(year)")
+        }
+        if result.contains("{clipboard}") {
+            let clip = NSPasteboard.general.string(forType: .string) ?? ""
+            result = result.replacingOccurrences(of: "{clipboard}", with: clip)
+        }
+        return result
+    }
+    
+    private func applySpokenSnippetCommands(to text: String) -> String {
+        let pattern = #"\b(?:insert|snippet)\s+([a-zA-Z0-9_\-]+)\b"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return text }
+        var result = text
+        
+        let matches = regex.matches(in: text, options: [], range: NSRange(text.startIndex..., in: text))
+        for match in matches.reversed() {
+            guard match.numberOfRanges >= 2,
+                  let targetRange = Range(match.range(at: 1), in: result),
+                  let fullRange = Range(match.range, in: result) else { continue }
+            let snippetKey = String(result[targetRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if let replacement = dictionary.first(where: { $0.key.caseInsensitiveCompare(snippetKey) == .orderedSame })?.value {
+                let expanded = resolveSnippetMacros(replacement)
+                result.replaceSubrange(fullRange, with: expanded)
+            }
         }
         return result
     }
@@ -214,7 +270,8 @@ public class TextFormatter {
         guard !dictionary.isEmpty else { return text }
         var result = text
         
-        for (pattern, replacement) in dictionary {
+        for (pattern, rawReplacement) in dictionary {
+            let replacement = resolveSnippetMacros(rawReplacement)
             let escapedPattern = NSRegularExpression.escapedPattern(for: pattern)
             let regexPattern = "\\b\(escapedPattern)\\b"
             if let regex = try? NSRegularExpression(pattern: regexPattern, options: .caseInsensitive) {

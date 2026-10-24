@@ -95,8 +95,31 @@ struct FloatingPillView: View {
                             .transition(.scale.combined(with: .opacity))
                         }
                         
-                        // C. Active Dictation Mode Pill Badge (if not default)
-                        if modeManager.currentMode != .defaultMode {
+                        // C. Active Dictation Mode Pill Badge
+                        if modeManager.currentMode == .auto {
+                            Button(action: {
+                                withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
+                                    modeManager.togglePicker()
+                                }
+                            }) {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "sparkles")
+                                        .font(.system(size: 8.5, weight: .bold))
+                                        .foregroundColor(Color(red: 0.35, green: 0.85, blue: 1.0))
+                                    Text("Auto: \(modeManager.effectiveMode.rawValue)")
+                                        .font(.system(size: 9, weight: .semibold, design: .rounded))
+                                }
+                                .foregroundColor(.white.opacity(0.90))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2.5)
+                                .background(
+                                    Capsule()
+                                        .fill(Color.white.opacity(0.12))
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .transition(.opacity)
+                        } else if modeManager.currentMode != .defaultMode {
                             Button(action: {
                                 withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
                                     modeManager.togglePicker()

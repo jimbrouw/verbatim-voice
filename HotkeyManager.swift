@@ -137,9 +137,9 @@ class HotkeyManager: ObservableObject {
                 return Unmanaged.passUnretained(event)
             }
             
-            // 2. Mode Picker selection with numbers 1-5 while picker is visible
+            // 2. Mode Picker selection with numbers 0-6 while picker is visible
             if ModeManager.shared.isPickerVisible && (recordingManager.isRecording || recordingManager.isHandsFreeMode) {
-                let numberMap: [Int64: Int] = [18: 1, 19: 2, 20: 3, 21: 4, 23: 5]
+                let numberMap: [Int64: Int] = [29: 0, 18: 1, 19: 2, 20: 3, 21: 4, 23: 5, 22: 6]
                 if let num = numberMap[keyCode] {
                     DispatchQueue.main.async {
                         _ = ModeManager.shared.selectByNumber(num)
