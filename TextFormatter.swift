@@ -24,6 +24,23 @@ public class TextFormatter {
         return dictionary.count
     }
     
+    public func getDictionaryEntries() -> [(phrase: String, replacement: String)] {
+        return dictionary.map { ($0.key, $0.value) }.sorted { $0.phrase.localizedCaseInsensitiveCompare($1.phrase) == .orderedAscending }
+    }
+    
+    public func setEntry(phrase: String, replacement: String) {
+        let trimmedPhrase = phrase.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedRep = replacement.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPhrase.isEmpty else { return }
+        dictionary[trimmedPhrase] = trimmedRep.isEmpty ? trimmedPhrase : trimmedRep
+        saveDictionary()
+    }
+    
+    public func removeEntry(phrase: String) {
+        dictionary.removeValue(forKey: phrase)
+        saveDictionary()
+    }
+    
     public func mergeDictionary(entries: [String: String]) {
         for (key, val) in entries {
             dictionary[key] = val
@@ -101,6 +118,14 @@ public class TextFormatter {
             return FormattedInjection(text: "", shouldPressEnter: false)
         }
         
+        let currentMode = ModeManager.shared.currentMode
+        
+        // Fast-path: Blazing Fast mode bypasses all formatting passes
+        if currentMode == .blazingFast {
+            let leading = applyContextualLeadingSpace(text: text, beforeText: context.beforeText)
+            return FormattedInjection(text: leading, shouldPressEnter: false)
+        }
+        
         // 1. Wispr Flow Natural-Language Backtracking & Self-Correction pass
         text = SmartBacktracker.shared.process(text)
         guard !text.isEmpty else {
@@ -113,10 +138,15 @@ public class TextFormatter {
         // 3. Screen Context pass (match exact on-screen casing for technical identifiers)
         text = ScreenContext.shared.harmonizeWithScreenContext(text)
         
-        // 4. Dyslexia Phonetic Homophone Disambiguation
-        text = DyslexiaTranslator.shared.disambiguateHomophones(text)
+        // 4. Dyslexia Phonetic Homophone Disambiguation (unless in Code mode to avoid affecting variable names)
+        if currentMode != .code {
+            text = DyslexiaTranslator.shared.disambiguateHomophones(text)
+        }
         
-        // 5. Voice command: "press enter" / "press return" at end of utterance
+        // 5. Mode-Specific Formatting (Email, Messaging, Code)
+        text = applyModeFormatting(text: text, mode: currentMode)
+        
+        // 6. Voice command: "press enter" / "press return" at end of utterance
         let (commandFreeText, shouldPressEnter) = extractPressEnterCommand(from: text)
         text = commandFreeText
         
@@ -124,13 +154,58 @@ public class TextFormatter {
             return FormattedInjection(text: "", shouldPressEnter: shouldPressEnter)
         }
         
-        // 6. Context-aware capitalization based on beforeText
+        // 7. Context-aware capitalization based on beforeText
         text = applyContextualCapitalization(text: text, beforeText: context.beforeText)
         
-        // 7. Context-aware leading space
+        // 8. Context-aware leading space
         text = applyContextualLeadingSpace(text: text, beforeText: context.beforeText)
         
         return FormattedInjection(text: text, shouldPressEnter: shouldPressEnter)
+    }
+    
+    // MARK: - Mode Specific Formatting
+    
+    private func applyModeFormatting(text: String, mode: DictationMode) -> String {
+        var result = text
+        switch mode {
+        case .messaging:
+            // Translate spoken emojis
+            let emojiRules: [(String, String)] = [
+                (#"\b(?:thumbs up|thumb up)\b"#, "👍"),
+                (#"\b(?:thumbs down|thumb down)\b"#, "👎"),
+                (#"\b(?:heart|red heart)\b"#, "❤️"),
+                (#"\b(?:fire|flame)\b"#, "🔥"),
+                (#"\b(?:crying laughing|laughing face|rofl)\b"#, "😂"),
+                (#"\b(?:smiling face|smiley face|smile face)\b"#, "😊"),
+                (#"\b(?:wink face|winking face|wink)\b"#, "😉"),
+                (#"\b(?:party face|celebrate|celebration)\b"#, "🎉"),
+                (#"\b(?:folded hands|praying hands|high five)\b"#, "🙏"),
+                (#"\b(?:skull face|skull)\b"#, "💀")
+            ]
+            for (pattern, emoji) in emojiRules {
+                if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
+                    let range = NSRange(result.startIndex..., in: result)
+                    result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: emoji)
+                }
+            }
+            
+        case .email:
+            // Format salutations and sign-offs
+            let salutationPatterns = [
+                (#"^(Hi|Hello|Hey|Dear)\s+([A-Z][a-z]+)[,\.]?\s*"#, "$1 $2,\n\n"),
+                (#"\b(Best regards|Warm regards|Best|Thanks|Thank you|Cheers|Sincerely)[,\.]?\s*$"#, "\n\n$1,")
+            ]
+            for (pattern, replacement) in salutationPatterns {
+                if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
+                    let range = NSRange(result.startIndex..., in: result)
+                    result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: replacement)
+                }
+            }
+            
+        case .code, .defaultMode, .blazingFast:
+            break
+        }
+        return result
     }
     
     // MARK: - Dictionary Pass

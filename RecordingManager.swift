@@ -187,6 +187,9 @@ class RecordingManager: ObservableObject {
         let targetElement = self.capturedFocusedElement ?? AccessibilityContext.shared.getFocusedElement()
         self.capturedFocusedElement = nil
         
+        // Log to local dictation history
+        HistoryManager.shared.record(text: formattedText, app: targetApp, mode: ModeManager.shared.currentMode.rawValue)
+        
         let pasteboard = NSPasteboard.general
         let savedItems = TextInjector.shared.backupPasteboard(pasteboard)
         

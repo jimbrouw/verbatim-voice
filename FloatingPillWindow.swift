@@ -7,12 +7,12 @@ import Combine
 /// and smoothly vanishes when dictation is completed and pasted.
 class FloatingPillWindow: NSPanel {
     private var cancellables = Set<AnyCancellable>()
-    private let targetWidth: CGFloat = 420
-    private let targetHeight: CGFloat = 54
+    private let targetWidth: CGFloat = 520
+    private let targetHeight: CGFloat = 100
     
     init(recordingManager: RecordingManager) {
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 54),
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 100),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -88,7 +88,10 @@ class FloatingPillWindow: NSPanel {
     }
     
     private func hideInteraction() {
-        // 1. Fade out the active-window blue selection border
+        // 1. Hide mode picker if visible
+        ModeManager.shared.hidePicker()
+        
+        // 2. Fade out the active-window blue selection border
         WindowHighlightOverlay.shared.hide()
         
         // 2. Fade and slide down the bottom pill after brief confirmation

@@ -108,6 +108,11 @@ class HotkeyManager: ObservableObject {
             
             // 1. Escape (Keycode 53) -> Instant Discard / Cancel
             if keyCode == 53 {
+                if ModeManager.shared.isPickerVisible {
+                    DispatchQueue.main.async { ModeManager.shared.hidePicker() }
+                    return nil
+                }
+                
                 if SummaryCardWindow.shared.isVisible {
                     DispatchQueue.main.async {
                         SummaryCardWindow.shared.dismiss()
@@ -130,6 +135,18 @@ class HotkeyManager: ObservableObject {
                     return nil // swallow Esc
                 }
                 return Unmanaged.passUnretained(event)
+            }
+            
+            // 2. Mode Picker selection with numbers 1-5 while picker is visible
+            if ModeManager.shared.isPickerVisible && (recordingManager.isRecording || recordingManager.isHandsFreeMode) {
+                let numberMap: [Int64: Int] = [18: 1, 19: 2, 20: 3, 21: 4, 23: 5]
+                if let num = numberMap[keyCode] {
+                    DispatchQueue.main.async {
+                        _ = ModeManager.shared.selectByNumber(num)
+                        ModeManager.shared.hidePicker()
+                    }
+                    return nil // swallow number key
+                }
             }
             
             // 2. Spacebar (Keycode 49) while holding activation key -> Promote to Hands-Free!
@@ -155,11 +172,22 @@ class HotkeyManager: ObservableObject {
             return Unmanaged.passUnretained(event)
         }
         
-        // Modifier Key Events (Activation Hotkey)
+        // Modifier Key Events (Activation Hotkey & Right Shift Mode Picker)
         if type == .flagsChanged {
             let flags = event.flags
             let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
             let activationKey = ActivationKey.current
+            
+            // Right Shift (Keycode 60) toggles Mode Picker while dictating
+            if keyCode == 60 {
+                let isShiftDown = flags.contains(.maskShift)
+                if isShiftDown && (recordingManager.isRecording || recordingManager.isHandsFreeMode) {
+                    DispatchQueue.main.async {
+                        ModeManager.shared.togglePicker()
+                    }
+                    return nil // swallow right shift
+                }
+            }
             
             let isTargetKey = activationKey.matches(keyCode: keyCode) || activationKey.isPressed(in: NSEvent.ModifierFlags(rawValue: UInt(flags.rawValue)))
             let isPressed = activationKey.isPressed(in: NSEvent.ModifierFlags(rawValue: UInt(flags.rawValue)))
@@ -245,13 +273,23 @@ class HotkeyManager: ObservableObject {
                     self.recordingManager.stopRecording()
                 }
             } else {
-                // Quick tap (<0.4s): User tapped quickly to dictate hands-free!
-                // Keep recording active in Hands-Free mode so user can speak freely and tap again when done.
-                print("🎙️ [HotkeyManager] Quick tap (\(String(format: "%.2f", pressDuration))s) -> Entering Hands-Free dictation mode")
+                // Monologue Rule: Quick tap (<0.4s) candidate
+                // Wait for doubleTapGraceWindow (600ms). If 2nd tap arrives, promotes to Hands-Free lock.
+                // If NO 2nd tap arrives within 600ms, silently discard (accidental press).
                 lastTapReleasedAt = now
-                DispatchQueue.main.async {
-                    self.recordingManager.startHandsFreeRecording()
+                print("⏳ [HotkeyManager] Quick tap (\(String(format: "%.2f", pressDuration))s) -> waiting \(String(format: "%.0f", doubleTapGraceWindow * 1000))ms for double-tap lock confirmation...")
+                
+                quickTapGraceWorkItem?.cancel()
+                let workItem = DispatchWorkItem { [weak self] in
+                    guard let self = self else { return }
+                    print("🔇 [HotkeyManager] 600ms grace window elapsed with no 2nd tap -> silently discarding accidental tap")
+                    self.lastTapReleasedAt = nil
+                    DispatchQueue.main.async {
+                        self.recordingManager.silentDiscard()
+                    }
                 }
+                self.quickTapGraceWorkItem = workItem
+                DispatchQueue.main.asyncAfter(deadline: .now() + doubleTapGraceWindow, execute: workItem)
             }
         }
     }
